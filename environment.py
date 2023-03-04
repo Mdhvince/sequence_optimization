@@ -37,14 +37,21 @@ class EnvSeq:
 
 
     def reset(self):
-        # max reward for this sequence is 1196
+        # self.initial_seat_sequence = np.array([
+        #     [20, 30, 15, 13, 18, 21, 23, 33, 37],
+        #     [20, 30, 15, 13, 18, 21, 23, 33, 37],
+        #     [20, 30, 15, 13, 18, 21, 23, 33, 37],
+        #     [10, 15, 20, 21, 40, 18, 12, 16, 18],
+        #     [10, 15, 20, 21, 40, 18, 12, 16, 18],
+        # ])
         self.initial_seat_sequence = np.array([
             [20, 30, 15, 13, 18, 21, 23, 33, 37],
-            [20, 30, 15, 13, 18, 21, 23, 33, 37],
-            [20, 30, 15, 13, 18, 21, 23, 33, 37],
             [10, 15, 20, 21, 40, 18, 12, 16, 18],
-            [10, 15, 20, 21, 40, 18, 12, 16, 18],
+            [33, 46, 15, 12, 11, 45, 22, 21, 40],
+            [11, 17, 30, 31, 30, 14, 14, 17, 13],
+            [30, 40, 10, 12, 16, 31, 33, 23, 20]
         ])
+        np.random.shuffle(self.initial_seat_sequence)
         self.batch_of_seats, self.n_positions = self.initial_seat_sequence.shape
 
         self.scaled_initial_seat_sequence = self._scale_state(self.initial_seat_sequence, self.THRESHOLD)
@@ -57,7 +64,7 @@ class EnvSeq:
         return state
 
 
-    def update_state(self, state, action, t_step):
+    def step(self, state, action, t_step):
         """
         Apply action on environment and build a new state (next state):
             1 - update the current row (t_step) of the final seq, with the chosen row (action) of the initial seq
@@ -66,17 +73,15 @@ class EnvSeq:
             4 - update the array of available actions by replacing the taken action by -1
             5 - decrease the number of remaining moves
 
-        Reward is -1 for invalid behaviors, 0 for good behavior and R > 0 for reaching completing the task.
+        Reward is -100 for invalid behaviors, 0 for good behavior and R > 0 for reaching completing the task.
         (I can also try to give a reward only if an expected sequence is given but that would a too "supervised")
         """
         is_terminal = False
         reward = 0.0
 
-        action = round(action)
-
         if self._is_invalid_behavior(action):
             is_terminal = True
-            reward = -1.0
+            reward = -100.0
             return state, reward, is_terminal
 
         self.final_seat_sequence[t_step] = self.scaled_initial_seat_sequence[action]
@@ -112,11 +117,24 @@ class EnvSeq:
         Only one action dimension : choose the row from the initial sequence to be placed in the placeholder sequence.
         The action is the row id ranging from 0 to  batch_of_seats-1
         """
-        LOW, UP = 0, self.batch_of_seats - 1
+        _ = self.reset()  # to update batch_of_seats
 
+        LOW, UP = 0, self.batch_of_seats - 1
         action_bounds = np.array([LOW]), np.array([UP])
         return action_bounds
-    
+
+
+    @property
+    def observation_space(self):
+        state = self.reset()
+        return len(state)
+
+
+    @property
+    def action_space(self):
+        _ = self.reset()    # to update batch_of_seats
+        return self.batch_of_seats
+
 
     def _build_state(self):
         initial_scaled_seq = self.scaled_initial_seat_sequence.flatten()
@@ -152,7 +170,7 @@ class EnvSeq:
         allow the algorithm to have a preference for lower complexity after a high one
         """
         max_complexity = np.max(seat_sequence, axis=None)
-        delta = max_complexity - self.threshold
+        delta = max_complexity - threshold
 
         activation = lambda elt, thresh, delta: elt if elt < thresh else elt + delta
         scaled_seat_sequence = np.array(
@@ -160,8 +178,6 @@ class EnvSeq:
         ).reshape(self.batch_of_seats, self.n_positions)
 
         return scaled_seat_sequence
-
-    
 
 
 if __name__ == "__main__":

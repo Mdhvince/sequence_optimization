@@ -1,9 +1,10 @@
 import warnings
-from collections import deque
+from itertools import count
 
 import torch
+import numpy as np
 import torch.optim as optim
-from fc import FCDP, FCQV
+from fc import FCDP, FCQV, FCDAP, FCV, FCAC
 from action_selection import GreedyStrategyContinuous, NormalNoiseStrategyContinuous
 from replay_buffer import ReplayBuffer
 
@@ -38,12 +39,13 @@ class DDPG:
         self.training_strategy = NormalNoiseStrategyContinuous(action_bounds, exploration_noise_ratio=0.1)
         self.eval_strategy = GreedyStrategyContinuous(action_bounds)
 
-    def interact_with_environment(self, state, env, t_step, max_iter):
+    def interact_with_environment(self, state, env, t_step):
         min_samples = self.memory.batch_size * self.n_warmup_batches
         use_max_exploration = len(self.memory) < min_samples
 
         action = self.training_strategy.select_action(self.actor, state, use_max_exploration)
-        next_state, reward, is_terminal, _ = env.step(action, state, t_step, max_iter)
+
+        next_state, reward, is_terminal = env.step(state, action, t_step)
         experience = (state, action, reward, next_state, float(is_terminal))
 
         return experience
@@ -80,23 +82,20 @@ class DDPG:
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad)
         self.actor_optimizer.step()
 
-    def evaluate_one_episode(self, env, max_iter):
+    def evaluate_one_episode(self, env):
         total_rewards = 0
-        reward_per_swap = deque(maxlen=5)
 
         s, d = env.reset(), False
 
-        for ts in range(max_iter):
+        for ts in count():
             with torch.no_grad():
                 a = self.eval_strategy.select_action(self.actor, s)
-
-            s, r, d, _ = env.step(a, s, ts, max_iter)
+            s, r, d = env.step(s, a, ts)
 
             total_rewards += r
-            reward_per_swap.append(r)
             if d: break
 
-        return total_rewards, reward_per_swap
+        return total_rewards
 
     def sync_weights(self, use_polyak_averaging=True):
         if use_polyak_averaging:
@@ -135,6 +134,108 @@ class DDPG:
 
             for t, b in zip(self.actor_target.parameters(), self.actor.parameters()):
                 t.data.copy_(b.data)
+
+
+class VPG:
+    def __init__(self, nS, nA, device):
+        self.device = device
+        self.gamma = .99
+        lr_p = 0.0005
+        lr_v = 0.0007
+        hidden_dims_p = (128, 64)
+        hidden_dims_v = (256, 128)
+        self.entropy_loss_weight = 0.001
+
+        # Define policy network, value network and max gradient for gradient clipping
+        self.policy = FCDAP(self.device, nS, nA, hidden_dims=hidden_dims_p).to(self.device)
+        self.p_optimizer = optim.Adam(self.policy.parameters(), lr=lr_p)
+        self.p_max_grad = 1
+
+        self.value_model = FCV(self.device, nS, hidden_dims=hidden_dims_v).to(self.device)
+        self.v_optimizer = optim.RMSprop(self.value_model.parameters(), lr=lr_v)
+        self.v_max_grad = float("inf")
+
+        self.logpas = []
+        self.rewards = []
+        self.entropies = []
+        self.values = []
+
+    def interact_with_environment(self, state, env, t_step):
+        action, logpa, entropy = self.policy.full_pass(state)
+        next_state, reward, is_terminal = env.step(state, action, t_step)
+
+        self.logpas.append(logpa)
+        self.rewards.append(reward)
+        self.entropies.append(entropy)
+        self.values.append(self.value_model(state))
+
+        return next_state, is_terminal
+
+    def learn(self):
+        """
+        Learn once full trajectory is collected
+        """
+        T = len(self.rewards)
+        discounts = np.logspace(0, T, num=T, base=self.gamma, endpoint=False)
+        returns = np.array([np.sum(discounts[:T - t] * self.rewards[t:]) for t in range(T)])
+        discounts = torch.FloatTensor(discounts[:-1]).unsqueeze(1)
+        returns = torch.FloatTensor(returns[:-1]).unsqueeze(1)
+
+        self.logpas = torch.cat(self.logpas)
+        self.entropies = torch.cat(self.entropies)
+        self.values = torch.cat(self.values)
+
+        # --------------------------------------------------------------------
+        # A(St, At) = Gt - V(St)
+        # Loss = -1/N * sum_0_to_N( A(St, At) * log πθ(At|St) + βH )
+
+        advantage = returns - self.values
+        policy_loss = -(discounts * advantage.detach() * self.logpas).mean()
+        entropy_loss_H = -self.entropies.mean()
+        loss = policy_loss + self.entropy_loss_weight * entropy_loss_H
+
+        self.p_optimizer.zero_grad()
+        loss.backward()
+        # clip the gradient
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.p_max_grad)
+        self.p_optimizer.step()
+
+        # --------------------------------------------------------------------
+        # A(St, At) = Gt - V(St)
+        # Loss = 1/N * sum_0_to_N( A(St, At)² )
+
+        value_loss = advantage.pow(2).mul(0.5).mean()
+        self.v_optimizer.zero_grad()
+        value_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.value_model.parameters(), self.v_max_grad)
+        self.v_optimizer.step()
+
+    def evaluate_one_episode(self, env):
+        sequence = []
+        self.policy.eval()
+        total_rewards = 0
+        steps_completed = 0
+
+        s, d = env.reset(), False
+
+        for ts in count():
+            with torch.no_grad():
+                a = self.policy.select_greedy_action(s)
+            s, r, d = env.step(s, a, ts)
+
+            total_rewards += r
+            steps_completed += 1
+            sequence.append(a)
+            if d: break
+
+        self.policy.train()
+        return total_rewards, steps_completed, sequence
+
+    def reset_metrics(self):
+        self.logpas = []
+        self.rewards = []
+        self.entropies = []
+        self.values = []
 
 
 if __name__ == "__main__":
