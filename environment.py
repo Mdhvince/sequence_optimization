@@ -107,11 +107,12 @@ class EnvSeq:
         The higher the sum of total reward, the better the overall sequence is,
         """
         self.n_high_adjacent = self.count_adjacent_high_complexity(sequence)
+        penalty = -self.n_high_adjacent
 
         diff_adj = np.diff(sequence, axis=0)
         diffs = np.abs(diff_adj)
         reward = np.sum(diffs, axis=0)
-        return np.sum(reward) / (self.n_high_adjacent + 1)
+        return np.sum(reward) + penalty * 500
 
     def count_adjacent_high_complexity(self, sequence):
         mask = sequence >= self.THRESHOLD
