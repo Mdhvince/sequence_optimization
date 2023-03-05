@@ -61,7 +61,7 @@ if __name__ == "__main__":
             writer.add_scalar("n_high", np.mean(last_100_highs), i_episode)
 
             if (mean_100_score > running_mean_100) and (mean_100_score > 0):
-                print(f"Mean 100 reward: {mean_100_score}\t Saving ...")
+                print(f"Mean 100 reward: {mean_100_score}\t Saving weights...")
                 torch.save(agent.behavior_policy.state_dict(), model_path)
 
                 running_mean_100 = mean_100_score
