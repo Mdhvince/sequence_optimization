@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
-from agent import VPG
+from agents.agent_vpg import Agent
 from environment import EnvSeq
 
 warnings.filterwarnings('ignore')
@@ -17,7 +17,7 @@ if __name__ == "__main__":
     writer = SummaryWriter("runs/vpg")
 
     seed = 42
-    model_path = "actor.pt"
+    model_path = "agent_vpg.pt"
     n_episodes = 300000
 
     torch.manual_seed(seed)
@@ -26,11 +26,10 @@ if __name__ == "__main__":
 
     env = EnvSeq()
     nS, nA = env.observation_space, env.action_space
-
     print(f"nS: {nS}\nnA: {nA}")
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    agent = VPG(nS, nA, device)
+    agent = Agent(nS, nA, device)
 
     last_100_score = deque(maxlen=100)
     mean_of_last_100 = deque(maxlen=100)
@@ -53,19 +52,15 @@ if __name__ == "__main__":
         total_rewards, steps_completed, sequence = agent.evaluate_one_episode(env)
         last_100_score.append(total_rewards)
 
-        # print(f"Steps completed: {steps_completed} \t Rewards: {total_rewards}")
-        # print(f"Sequence: {sequence} \t Rewards: {total_rewards}")
-
+        # Stats
         if len(last_100_score) >= 100:
             mean_100_score = np.mean(last_100_score)
             if i_episode % 100 == 0:
-                # print(f"Episode {i_episode}\tAverage mean 100 eval score: {mean_100_score}")
                 writer.add_scalar("mean_100_rewards", mean_100_score, i_episode)
 
-        #
-        #     if (mean_100_score >= goal_mean_100_reward):
-        #         torch.save(agent.actor.state_dict(), model_path)
-        #         old_score = mean_100_score
-        #         break
+        # Save
+        # if (mean_100_score >= goal_mean_100_reward):
+        #     torch.save(agent.actor.state_dict(), model_path)
+        #     break
 
     writer.close()

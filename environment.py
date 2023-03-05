@@ -37,19 +37,17 @@ class EnvSeq:
 
 
     def reset(self):
-        # self.initial_seat_sequence = np.array([
-        #     [20, 30, 15, 13, 18, 21, 23, 33, 37],
-        #     [20, 30, 15, 13, 18, 21, 23, 33, 37],
-        #     [20, 30, 15, 13, 18, 21, 23, 33, 37],
-        #     [10, 15, 20, 21, 40, 18, 12, 16, 18],
-        #     [10, 15, 20, 21, 40, 18, 12, 16, 18],
-        # ])
         self.initial_seat_sequence = np.array([
             [20, 30, 15, 13, 18, 21, 23, 33, 37],
             [10, 15, 20, 21, 40, 18, 12, 16, 18],
             [33, 46, 15, 12, 11, 45, 22, 21, 40],
             [11, 17, 30, 31, 30, 14, 14, 17, 13],
-            [30, 40, 10, 12, 16, 31, 33, 23, 20]
+            [30, 40, 10, 12, 16, 31, 33, 23, 20],
+            [20, 30, 15, 13, 18, 21, 23, 33, 37],
+            [10, 15, 20, 21, 40, 18, 12, 16, 18],
+            [33, 46, 15, 12, 11, 45, 22, 21, 40],
+            [11, 17, 30, 31, 30, 14, 14, 17, 13],
+            [30, 40, 10, 12, 16, 31, 33, 23, 20],
         ])
         np.random.shuffle(self.initial_seat_sequence)
         self.batch_of_seats, self.n_positions = self.initial_seat_sequence.shape
@@ -78,6 +76,8 @@ class EnvSeq:
         """
         is_terminal = False
         reward = 0.0
+
+        # action = round(action[0])
 
         if self._is_invalid_behavior(action):
             is_terminal = True
@@ -134,6 +134,7 @@ class EnvSeq:
     def action_space(self):
         _ = self.reset()    # to update batch_of_seats
         return self.batch_of_seats
+        # return 1  # if continuous algo like td3
 
 
     def _build_state(self):
