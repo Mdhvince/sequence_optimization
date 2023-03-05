@@ -70,11 +70,11 @@ class Agent:
         loss.backward()
         self.optimizer.step()
 
-    def evaluate_one_episode(self, env):
-        total_rewards = 0
-        sequence = []
+    def evaluate_one_episode(self, env, shuffle):
+        total_rewards = 0.0
+        n_highs = 0.0
 
-        s, d = env.reset(), False
+        s, d = env.reset(shuffle), False
 
         for ts in count():
             with torch.no_grad():
@@ -82,10 +82,10 @@ class Agent:
             s, r, d = env.step(s, a, ts)
 
             total_rewards += r
-            sequence.append(a)
+            n_highs += env.n_high_adjacent
             if d: break
 
-        return total_rewards, sequence
+        return total_rewards, n_highs
 
     def sync_weights(self, use_polyak_averaging=True):
         if use_polyak_averaging:

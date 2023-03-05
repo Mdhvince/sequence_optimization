@@ -23,6 +23,7 @@ class EnvSeq:
 
         Goal: Optimize the order of seats (rows) without changing the order or positions (columns)
         """
+        self.n_high_adjacent = 0.0
         self.THRESHOLD = 19  # threshold (that discretize high to low complexity)
         self.batch_of_seats = None  # Number of seats in the batch
         self.n_positions = None  # Number of position per seats
@@ -36,7 +37,7 @@ class EnvSeq:
         self.scaled_initial_seat_sequence = None
 
 
-    def reset(self):
+    def reset(self, shuffle=False):
         self.initial_seat_sequence = np.array([
             [20, 30, 15, 13, 18, 21, 23, 33, 37],
             [10, 15, 20, 21, 40, 18, 12, 16, 18],
@@ -49,7 +50,8 @@ class EnvSeq:
             [11, 17, 30, 31, 30, 14, 14, 17, 13],
             [30, 40, 10, 12, 16, 31, 33, 23, 20],
         ])
-        np.random.shuffle(self.initial_seat_sequence)
+        if shuffle:
+            np.random.shuffle(self.initial_seat_sequence)
         self.batch_of_seats, self.n_positions = self.initial_seat_sequence.shape
 
         self.scaled_initial_seat_sequence = self._scale_state(self.initial_seat_sequence, self.THRESHOLD)
@@ -93,22 +95,32 @@ class EnvSeq:
 
         if self._is_task_completed():
             is_terminal = True
-            reward = EnvSeq.get_reward(self.final_seat_sequence)
+            reward = self.get_reward(self.final_seat_sequence)
 
         return next_state, reward, is_terminal
 
 
-    @staticmethod
-    def get_reward(sequence):
+    def get_reward(self, sequence):
         """
         Compute the difference between 2 adjacent rows.
         The higher the sum of diffs per columns, the better the sequence is for that position
         The higher the sum of total reward, the better the overall sequence is,
         """
+        self.n_high_adjacent = self.count_adjacent_high_complexity(sequence)
+        penalty = -self.n_high_adjacent
+
         diff_adj = np.diff(sequence, axis=0)
         diffs = np.abs(diff_adj)
         reward = np.sum(diffs, axis=0)
-        return np.sum(reward)
+        return np.sum(reward) + penalty * 100
+
+    def count_adjacent_high_complexity(self, sequence):
+        mask = sequence >= self.THRESHOLD
+        # shift the mask one row down to find consecutive pairs
+        shifted_mask = np.vstack((mask[1:], np.zeros_like(mask[-1])))
+        # count the number of pairs where both values are True
+        count = np.count_nonzero(mask & shifted_mask)
+        return count
 
 
     @property
