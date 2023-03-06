@@ -18,7 +18,7 @@ if __name__ == "__main__":
 
     seed = 42
     model_path = "agent_vpg.pt"
-    n_episodes = 300000
+    n_episodes = 800000
 
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -32,10 +32,11 @@ if __name__ == "__main__":
     agent = Agent(nS, nA, device)
 
     last_100_score = deque(maxlen=100)
-    mean_of_last_100 = deque(maxlen=100)
+    last_100_highs = deque(maxlen=100)
 
     for i_episode in range(1, n_episodes + 1):
-        state, is_terminal = env.reset(), False
+        shuffle = i_episode % 1000 == 0
+        state, is_terminal = env.reset(shuffle), False
 
         agent.reset_metrics()
 
@@ -49,14 +50,15 @@ if __name__ == "__main__":
         agent.learn()
 
         # Evaluate
-        total_rewards, steps_completed, sequence = agent.evaluate_one_episode(env)
+        total_rewards, n_highs = agent.evaluate_one_episode(env)
+        last_100_highs.append(n_highs)
         last_100_score.append(total_rewards)
 
         # Stats
-        if len(last_100_score) >= 100:
+        if i_episode % 100 == 0:
             mean_100_score = np.mean(last_100_score)
-            if i_episode % 100 == 0:
-                writer.add_scalar("mean_100_rewards", mean_100_score, i_episode)
+            writer.add_scalar("mean_100_rewards", mean_100_score, i_episode)
+            writer.add_scalar("n_high", np.mean(last_100_highs), i_episode)
 
         # Save
         # if (mean_100_score >= goal_mean_100_reward):

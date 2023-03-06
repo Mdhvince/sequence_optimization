@@ -85,10 +85,9 @@ class Agent:
         self.v_optimizer.step()
 
     def evaluate_one_episode(self, env):
-        sequence = []
         self.policy.eval()
-        total_rewards = 0
-        steps_completed = 0
+        total_rewards = 0.0
+        n_highs = 0.0
 
         s, d = env.reset(), False
 
@@ -98,12 +97,11 @@ class Agent:
             s, r, d = env.step(s, a, ts)
 
             total_rewards += r
-            steps_completed += 1
-            sequence.append(a)
+            n_highs += env.n_high_adjacent
             if d: break
 
         self.policy.train()
-        return total_rewards, steps_completed, sequence
+        return total_rewards, n_highs
 
     def reset_metrics(self):
         self.logpas = []

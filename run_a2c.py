@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
 
     mp_env = MultiprocessEnv(n_workers, seed)
-    states = mp_env.reset()                             # TODO: create a loop for episode and add this reset in the loop
+    states = mp_env.reset([False])                             # TODO: create a loop for episode and add this reset in the loop
 
     episode, n_steps_start = 0, 0
     max_n_steps = 200                                                  # TODO: this will need do be set as len(sequence)
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     agent.reset_metrics()
     for t_step in count():
         # ---- From here, everything is stacked (2d arrays of n rows = n_workers)
-        states, dones = agent.interact_with_environment(states, mp_env)
+        states, dones = agent.interact_with_environment(states, mp_env, t_step)
 
         if dones.sum() or (t_step+1) - n_steps_start == max_n_steps:
             next_values = agent.ac_model.get_state_value(states).detach().numpy() * (1 - dones)

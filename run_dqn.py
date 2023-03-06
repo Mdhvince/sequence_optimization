@@ -38,7 +38,16 @@ if __name__ == "__main__":
     running_mean_100 = -np.inf
 
     for i_episode in range(1, n_episodes + 1):
-        shuffle = i_episode % 50 == 0
+
+        if i_episode < 6000:
+            shuffle = i_episode % 50 == 0
+        elif 6000 <= i_episode < 10000:
+            shuffle = i_episode % 25 == 0
+        elif 10000 <= i_episode < 14000:
+            shuffle = i_episode % 10 == 0
+        else:
+            shuffle = True
+
         state, is_terminal = env.reset(shuffle), False
 
         for t_step in count():

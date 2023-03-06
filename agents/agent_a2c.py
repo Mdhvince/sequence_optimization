@@ -35,12 +35,12 @@ class Agent:
         self.rewards = None
         self.logpas = None
 
-    def interact_with_environment(self, states, mp_env):
+    def interact_with_environment(self, states, mp_env, t_step):
         # Infer on batch of states
         actions, logpas, entropies, values = self.ac_model.full_pass(states)
 
         # send the 'step' cmd from main process to child process
-        new_states, rewards, dones, _ = mp_env.step(actions)  # TODO: review the step function
+        new_states, rewards, dones = mp_env.step(states, actions, t_step)
 
         self.logpas.append(logpas)
         self.entropies.append(entropies)
