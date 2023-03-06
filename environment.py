@@ -1,7 +1,104 @@
 import warnings
 import numpy as np
 
+import torch.multiprocessing as mp
+
+
 warnings.filterwarnings('ignore')
+
+
+class MultiprocessEnv(object):
+
+    def __init__(self, n_workers, seed):
+        self.n_workers = n_workers
+        self.seed = seed
+
+        # In A2C there is one learner in the main process and several workers in the env.
+        # So we need a way for the agent to send command from the main process (parent) to the
+        # workers (children). We can achieve this using Pipe.
+        self.pipes = [mp.Pipe() for _ in range(self.n_workers)]
+
+        self.workers = []  # hold the workers, so we can use .join() later in .close()
+
+        for worker_id in range(self.n_workers):
+            w = mp.Process(target=self.work, args=(worker_id, self.pipes[worker_id][1]))
+            self.workers.append(w)
+            w.start()
+
+    def work(self, worker_id, child_process):
+        seed = self.seed + worker_id
+        env = EnvSeq()
+
+        # Execute the received command
+        while True:
+            cmd, kwargs = child_process.recv()
+            if cmd == "reset":
+                child_process.send(env.reset(**kwargs))
+            elif cmd == "step":
+                child_process.send(env.step(**kwargs))
+            else:
+                del env
+                child_process.close()
+                break
+
+    def reset(self, shuffles, worker_id=None):
+        """
+        - If worker_id is not None: Send the reset message from the parent to the child.
+        The child will receive the message in .work() then send the result of env.reset() to the
+        parent here.
+        - Otherwise, send the reset to all children and get + stack their results (states)
+        """
+        # since all workers will not finish at the same time, we need a way to reset one particular
+        # worker when he is done, so he can start re-interacting with the environment
+        if worker_id is not None:
+            main_process, _ = self.pipes[worker_id]
+            msg = (
+                "reset", {"shuffle": shuffles[worker_id]}
+            )
+            self.send_msg(msg, worker_id)
+            state = main_process.recv()  # [0]
+            return state
+
+        self.broadcast_msg(('reset', {}))
+        return np.vstack([main_process.recv() for main_process, _ in self.pipes])
+
+    def send_msg(self, msg, worker_id):
+        main_process, _ = self.pipes[worker_id]
+        main_process.send(msg)
+
+    def step(self, states, actions, t_steps):
+        # batch of actions. each worker should have take an action, so len(actions) should be
+        # equal to the number of workers.
+        assert len(actions) == self.n_workers
+
+        for worker_id in range(self.n_workers):
+            # dictionary will be pass as kwargs, so argument will be key=value in the env.step()
+            msg = (
+                "step", {
+                    "state": states[worker_id], "action": actions[worker_id], "t_step": t_steps[worker_id]
+                }
+            )
+            self.send_msg(msg, worker_id)
+
+        results = []
+        for worker_id in range(self.n_workers):
+            main_process, _ = self.pipes[worker_id]
+            state, reward, done = main_process.recv()
+            results.append(
+                (state, np.array(reward, dtype=np.float), np.array(done, dtype=np.float))
+            )
+
+        # return array of 2d arrays.
+        # index 0 contains 2d arrays of states
+        # index 1 contains 2d arrays of rewards ...
+        return [np.vstack(block) for block in np.array(results).T]
+
+    def close(self):
+        self.broadcast_msg(("close", {}))
+        [w.join() for w in self.workers]
+
+    def broadcast_msg(self, msg):
+        [main_process.send(msg) for main_process, _ in self.pipes]
 
 
 class EnvSeq:
@@ -106,6 +203,9 @@ class EnvSeq:
         The higher the sum of diffs per columns, the better the sequence is for that position
         The higher the sum of total reward, the better the overall sequence is,
         """
+        # TODO: do not add penalty (negative) in the reward. It is better to add 1/positive instead
+        # TODO: only add the 1/self.n_high_adjacent as reward, so the task is focus on that and not on finding the
+        #  largest difference on adjacent seat
         self.n_high_adjacent = self.count_adjacent_high_complexity(sequence)
         penalty = -self.n_high_adjacent
 
