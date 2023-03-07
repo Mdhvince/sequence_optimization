@@ -38,7 +38,6 @@ if __name__ == "__main__":
     running_mean_100 = -np.inf
 
     for i_episode in range(1, n_episodes + 1):
-
         if i_episode < 6000:
             shuffle = i_episode % 50 == 0
         elif 6000 <= i_episode < 10000:

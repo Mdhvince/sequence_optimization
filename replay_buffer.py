@@ -8,6 +8,8 @@ import torch
 warnings.filterwarnings('ignore')
 
 
+# TODO: Improvement, add prioritized experience replay
+
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
 

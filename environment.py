@@ -58,7 +58,7 @@ class EnvSeq:
             np.random.shuffle(self.initial_seat_sequence)
         self.batch_of_seats, self.n_positions = self.initial_seat_sequence.shape
 
-        self.scaled_initial_seat_sequence = self._scale_state(self.initial_seat_sequence, self.THRESHOLD)
+        self.scaled_initial_seat_sequence = self._scale_sequence(self.initial_seat_sequence, self.THRESHOLD)
         self.final_seat_sequence = np.zeros((self.batch_of_seats, self.n_positions), dtype=int)
         self.actions_history = np.ones(self.batch_of_seats, dtype=int) * -1
         self.available_actions = np.arange(self.batch_of_seats)
@@ -104,7 +104,7 @@ class EnvSeq:
 
         return next_state, reward, is_terminal
 
-    # TODO: shape the reward such that less complex WC comes first, in order to create buffers
+
     def get_reward(self, sequence):
         """
         Compute the difference between 2 adjacent rows.
@@ -116,7 +116,7 @@ class EnvSeq:
         diff_adj = np.diff(sequence, axis=0)
         diffs = np.abs(diff_adj)
         reward = np.sum(diffs, axis=0)
-        return np.sum(reward) * 1 / self.n_high_adjacent
+        return np.sum(reward) * 1 / (self.n_high_adjacent + 1)
 
     def count_adjacent_high_complexity(self, sequence):
         mask = sequence >= self.THRESHOLD
@@ -181,7 +181,7 @@ class EnvSeq:
         return int(action) in self.actions_history
 
 
-    def _scale_state(self, seat_sequence, threshold):
+    def _scale_sequence(self, seat_sequence, threshold):
         """
         Scale the state:
         - Add delta to all high complexity values. This way over complexity already complex work content, this will
@@ -190,7 +190,8 @@ class EnvSeq:
         max_complexity = np.max(seat_sequence, axis=None)
         delta = max_complexity - threshold
 
-        activation = lambda elt, thresh, delta: 0 if elt < thresh else thresh  # elt + delta
+        # augment the distance between low WC and high WC
+        activation = lambda elt, thresh, delta: 0 if elt < thresh else thresh
         scaled_seat_sequence = np.array(
             [activation(i, threshold, delta) for row in seat_sequence for i in row]
         ).reshape(self.batch_of_seats, self.n_positions)
