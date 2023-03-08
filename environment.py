@@ -1,19 +1,125 @@
 import warnings
+
 import numpy as np
+import pandas as pd
 
 import torch.multiprocessing as mp
 
 
 warnings.filterwarnings('ignore')
 
+# TODO: Scale the seconds between 0 and 1 if we know the min and max possible WC
 
-class EnvSeq:
+class EnvSeqV1:
+    def __init__(self, workcontent, takt_time, buffer_percent):
+        """
+        Input:
+            - workcontent: Pandas dataframe where columns are positions dans values represent the workcontent
+            - takt_time:
+            - buffer_percent:
+
+        Goal: Optimize the order of seats (rows) without changing the order or positions (columns)
+        """
+        self.wc = workcontent
+        self.N_POSITIONS = len(workcontent.columns)
+        self.N_SEATS = len(workcontent)
+        self.TAKT_TIME_PP = takt_time
+        self.BUFFER_LENGTH_PP_PERCENT = buffer_percent
+        assert len(self.BUFFER_LENGTH_PP_PERCENT) == self.N_POSITIONS
+
+        self.MAX_LATE_TIME_PP = self.TAKT_TIME_PP * self.BUFFER_LENGTH_PP_PERCENT - self.TAKT_TIME_PP
+
+        self.available_actions = None
+        self.initial_seat_sequence = None
+        self.final_seat_sequence = None
+        self.stoppage_duration_pp = None
+        self.previous_late_time_pp = None
+        self.actions_history = None
+        self.total_stoppages = None
+        self.INF = 10e9
+
+
+    def reset(self, shuffle=False):
+        self.actions_history = []
+        self.total_stoppages = 0.0
+        self.initial_seat_sequence = np.copy(self.wc.values)
+
+        if shuffle:
+            np.random.shuffle(self.initial_seat_sequence)
+
+        self.final_seat_sequence = np.zeros((self.N_SEATS, self.N_POSITIONS))
+        self.stoppage_duration_pp = np.zeros(self.N_POSITIONS)
+        self.previous_late_time_pp = np.zeros(self.N_POSITIONS)
+        self.available_actions = np.arange(self.N_SEATS)
+
+        state = self._build_state()
+        return state
+
+
+    def step(self, action, t_step):
+        is_terminal = False
+        self.actions_history.append(action)  # useful for filtering out already taken action from the q-value
+        self.final_seat_sequence[t_step] = self.initial_seat_sequence[action]
+
+        # here I set WC with large workcontent, so it makes sense in the state to not choose that row
+        # otherwise the agent will be confused because I am modifying its behavior by modifying the Q-value but the
+        # state itself tells the contrary
+        self.initial_seat_sequence[action] = np.ones(self.N_POSITIONS) * self.INF  # np.zeros(self.N_POSITIONS)
+
+        # get current tps
+        late_time_tmp = self.final_seat_sequence[t_step] - self.TAKT_TIME_PP + self.previous_late_time_pp
+        late_time_func = lambda x: 0 if x < 0 else x  # ReLU
+        late_time = np.array([late_time_func(i) for i in late_time_tmp])
+
+        # get stoppage duration
+        stoppage_duration_func = lambda tps, tps_max: 0 if tps < tps_max else tps - tps_max
+        self.stoppage_duration_pp = np.array(
+            [stoppage_duration_func(i, self.MAX_LATE_TIME_PP[n]) for n, i in enumerate(late_time)])
+
+        # self.total_stoppages += np.sum(self.stoppage_duration_pp)
+        self.total_stoppages = np.sum(self.stoppage_duration_pp)  # gives the generated stoppage per steps instead
+
+        # reward
+        reward = 1 / (self.total_stoppages + 1)
+
+        # update previous tps
+        self.previous_late_time_pp = late_time
+
+        # update full state
+        next_state = self._build_state()
+
+        if self._is_task_completed():
+            is_terminal = True
+
+        return next_state, reward, is_terminal
+
+
+    @property
+    def observation_space(self):
+        state = self.reset()
+        return len(state)
+
+
+    @property
+    def action_space(self):
+        return self.N_SEATS
+
+
+    def _build_state(self):
+        i_ss = self.initial_seat_sequence.flatten()
+        prev_late_time = self.previous_late_time_pp
+        late_time_max = self.MAX_LATE_TIME_PP
+        state = np.concatenate((i_ss, prev_late_time, late_time_max))
+        return state
+
+
+    def _is_task_completed(self):
+        return np.all(self.initial_seat_sequence == self.INF)
+
+
+class EnvSeqV0:
     def __init__(self):
         """
-        Inputs:
-        - batch_of_seats:
-        - n_positions:
-
         Seat sequence representation: batch seat=3 and nPositions=4
         -------|P0|---|P1|---|P2|---|P3|-
         ---------------------------------
@@ -219,7 +325,7 @@ class MultiprocessEnv(object):
 
     def work(self, worker_id, child_process):
         seed = self.seed + worker_id
-        env = EnvSeq()
+        env = EnvSeqV0()
 
         # Execute the received command
         while True:
@@ -295,4 +401,6 @@ class MultiprocessEnv(object):
 
 
 if __name__ == "__main__":
-    pass
+    wc = pd.read_csv("notebooks/WC.csv", sep=";")
+    env = EnvSeqV1(wc)
+

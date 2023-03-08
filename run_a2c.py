@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from agents.agent_a2c import Agent
-from environment import EnvSeq, MultiprocessEnv
+from environment import EnvSeqV0, MultiprocessEnv
 
 warnings.filterwarnings('ignore')
 
@@ -20,7 +20,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     random.seed(seed)
 
-    env = EnvSeq()
+    env = EnvSeqV0()
     nS, nA = env.observation_space, env.action_space
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -28,10 +28,10 @@ if __name__ == "__main__":
 
 
     mp_env = MultiprocessEnv(n_workers, seed)
-    states = mp_env.reset([False])                             # TODO: create a loop for episode and add this reset in the loop
+    states = mp_env.reset([False])
 
     episode, n_steps_start = 0, 0
-    max_n_steps = 200                                                  # TODO: this will need do be set as len(sequence)
+    max_n_steps = 200
 
     last_100_score = deque(maxlen=100)
 

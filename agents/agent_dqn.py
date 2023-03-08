@@ -28,7 +28,9 @@ class Agent:
         self.memory_capacity = 50000
         self.memory = ReplayBuffer(self.memory_capacity, self.batch_size, self.seed)
 
+        # TODO: Add more layers
         hidden_dims = (512, 128)
+        hidden_dims = (1024, 512, 512, 128)
 
         if self.use_dueling:
             self.behavior_policy = DuelingDQN(self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
@@ -44,8 +46,8 @@ class Agent:
 
     def interact_with_environment(self, state, env, t_step, nA):
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
-        action = self.strategy.select_action(self.behavior_policy, state, nA)
-        next_state, reward, done = env.step(state, action, t_step)
+        action = self.strategy.select_action(self.behavior_policy, state, nA, env.actions_history)
+        next_state, reward, done = env.step(action, t_step)
         return action, reward, next_state, done
 
     def sample_and_learn(self):
@@ -72,20 +74,21 @@ class Agent:
 
     def evaluate_one_episode(self, env, shuffle):
         total_rewards = 0.0
-        n_highs = 0.0
+        stoppage_pp = np.zeros(env.N_POSITIONS)
 
         s, d = env.reset(shuffle), False
 
-        for ts in count():
+        for ts in range(env.N_SEATS):
             with torch.no_grad():
-                a = GreedyStrategy.select_action(self.behavior_policy, s)
-            s, r, d = env.step(s, a, ts)
+                a = GreedyStrategy.select_action(self.behavior_policy, s, env.actions_history)
+            s, r, d = env.step(a, ts)
 
             total_rewards += r
-            n_highs += env.n_high_adjacent
+            stoppage_pp += env.stoppage_duration_pp
+
             if d: break
 
-        return total_rewards, n_highs
+        return total_rewards, stoppage_pp
 
     def sync_weights(self, use_polyak_averaging=True):
         if use_polyak_averaging:

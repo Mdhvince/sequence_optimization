@@ -73,13 +73,19 @@ class NormalNoiseDecayStrategyContinuous:
         return action
 
 
-def e_greedy_action_selection(model, state, epsilon, nA):
+def e_greedy_action_selection(model, state, epsilon, nA, illegal_actions=None):
     if np.random.rand() > epsilon:
         model.eval()
         with torch.no_grad():
             q_values = model(state).cpu().detach().data.numpy().squeeze()
         model.train()
         action = np.argmax(q_values)
+
+        # Down the value of illegal actions
+        if illegal_actions is not None:
+            while action in illegal_actions:
+                q_values[action] = -np.inf
+                action = np.argmax(q_values)
     else:
         action = np.random.randint(nA)
     return action
@@ -101,8 +107,8 @@ class EGreedyExpStrategy:
         self.t += 1
         return self.epsilon
 
-    def select_action(self, model, state, nA):
-        action = e_greedy_action_selection(model, state, self.epsilon, nA)
+    def select_action(self, model, state, nA, illegal_actions=None):
+        action = e_greedy_action_selection(model, state, self.epsilon, nA, illegal_actions)
         self._epsilon_update()
         return action
 
@@ -112,10 +118,18 @@ class GreedyStrategy:
         self.exploratory_action_taken = False
 
     @staticmethod
-    def select_action(model, state):
+    def select_action(model, state, illegal_actions=None):
         with torch.no_grad():
             q_values = model(state).cpu().detach().data.numpy().squeeze()
-            return np.argmax(q_values)
+
+        action = np.argmax(q_values)
+        # Down the value of illegal actions
+        if illegal_actions is not None:
+            while action in illegal_actions:
+                q_values[action] = -np.inf
+                action = np.argmax(q_values)
+
+        return action
 
 
 if __name__ == "__main__":

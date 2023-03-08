@@ -9,6 +9,7 @@ from fc import FCDAP, FCV
 
 warnings.filterwarnings('ignore')
 
+# TODO: Find a way to disable actions for VPG
 
 class Agent:
     def __init__(self, nS, nA, device):
@@ -87,7 +88,7 @@ class Agent:
     def evaluate_one_episode(self, env):
         self.policy.eval()
         total_rewards = 0.0
-        n_highs = 0.0
+        stoppage_pp = np.zeros(env.N_POSITIONS)
 
         s, d = env.reset(), False
 
@@ -97,11 +98,11 @@ class Agent:
             s, r, d = env.step(s, a, ts)
 
             total_rewards += r
-            n_highs += env.n_high_adjacent
+            stoppage_pp += env.stoppage_duration_pp
             if d: break
 
         self.policy.train()
-        return total_rewards, n_highs
+        return total_rewards, stoppage_pp
 
     def reset_metrics(self):
         self.logpas = []
