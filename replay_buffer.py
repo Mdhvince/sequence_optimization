@@ -50,7 +50,7 @@ class ReplayBuffer:
             np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)
         ).float().to(device)
 
-        return (states, actions, rewards, next_states, dones)  # (batch_size x 5)
+        return states, actions, rewards, next_states, dones  # (batch_size x 5)
 
     def __len__(self):
         """Return the current size of internal memory."""

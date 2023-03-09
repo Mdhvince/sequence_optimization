@@ -1,5 +1,4 @@
 import warnings
-from itertools import count
 
 import torch
 import numpy as np
@@ -18,22 +17,22 @@ class Agent:
         self.seed = seed
         self.batch_size = 256
         lr = .01
-        self.gamma = .99
+        self.gamma = .995
         self.device = device
-        self.strategy = EGreedyExpStrategy()
+        self.strategy = EGreedyExpStrategy(init_epsilon=1.0, min_epsilon=0.1)
         self.use_ddqn = True
         self.use_dueling = True
         self.tau = 0.1
 
-        self.memory_capacity = 50000
+        self.memory_capacity = 100000
         self.memory = ReplayBuffer(self.memory_capacity, self.batch_size, self.seed)
 
-        # TODO: Add more layers
-        hidden_dims = (512, 128)
+        # hidden_dims = (512, 128)
         hidden_dims = (1024, 512, 512, 128)
 
         if self.use_dueling:
-            self.behavior_policy = DuelingDQN(self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
+            self.behavior_policy = DuelingDQN(
+                self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
             self.target_policy = DuelingDQN(self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
         else:
             self.behavior_policy = DQN(self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
@@ -47,7 +46,7 @@ class Agent:
     def interact_with_environment(self, state, env, t_step, nA):
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
         action = self.strategy.select_action(self.behavior_policy, state, nA, env.actions_history)
-        next_state, reward, done = env.step(action, t_step)
+        next_state, reward, done = env.step(state, action, t_step)
         return action, reward, next_state, done
 
     def sample_and_learn(self):
@@ -75,20 +74,22 @@ class Agent:
     def evaluate_one_episode(self, env, shuffle):
         total_rewards = 0.0
         stoppage_pp = np.zeros(env.N_POSITIONS)
+        seq = []
 
         s, d = env.reset(shuffle), False
 
         for ts in range(env.N_SEATS):
             with torch.no_grad():
                 a = GreedyStrategy.select_action(self.behavior_policy, s, env.actions_history)
-            s, r, d = env.step(a, ts)
+            s, r, d = env.step(s, a, ts)
 
             total_rewards += r
-            stoppage_pp += env.stoppage_duration_pp
+            stoppage_pp += env.stoppage_per_position
+            seq.append(a)
 
             if d: break
 
-        return total_rewards, stoppage_pp
+        return total_rewards, stoppage_pp, seq
 
     def sync_weights(self, use_polyak_averaging=True):
         if use_polyak_averaging:

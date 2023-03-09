@@ -53,7 +53,6 @@ class FCDAP(nn.Module):  # Fully connected discrete action policy for VPG
         # sample action from the probability distribution
         dist = torch.distributions.Categorical(logits=logits)
         action = dist.sample()
-
         log_p_action = dist.log_prob(action).unsqueeze(-1)
 
         # the entropy term encourage having evenly distributed actions
@@ -70,7 +69,8 @@ class FCDAP(nn.Module):  # Fully connected discrete action policy for VPG
 
     def select_greedy_action(self, state):
         logits = self.forward(state)
-        return np.argmax(logits.detach().numpy())
+        action = np.argmax(logits.detach().numpy())
+        return action
 
 class FCV(nn.Module):  # Fully connected value (state-value) for VPG
 
