@@ -11,15 +11,20 @@ AS_NEW_ROW = 0
 AS_NEW_COLUMN = 1
 
 ################################################################################################### Policy based methods
-class FCDAP(nn.Module):  # Fully connected discrete action policy for VPG
+class PolicyVPG(nn.Module):  # discrete action policy for VPG
 
-    def __init__(self, device, in_dim, out_dim, hidden_dims=(32, 32), activation=F.relu) -> None:
-        super(FCDAP, self).__init__()
+    def __init__(self, device, state_shape, out_dim, hidden_dims=(32, 32), activation=F.relu) -> None:
+        super(PolicyVPG, self).__init__()
 
         self.device = device
         self.activation = activation
+        C, H, W = state_shape
 
-        self.fc1 = nn.Linear(in_dim, hidden_dims[0])
+        self.conv1 = nn.Conv2d(in_channels=C, out_channels=16, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+
+        self.fc1 = nn.Linear(in_features=64 * H * W, out_features=hidden_dims[0])
         self.hidden_layers = nn.ModuleList()
 
         for i in range(len(hidden_dims) - 1):
@@ -27,11 +32,9 @@ class FCDAP(nn.Module):  # Fully connected discrete action policy for VPG
             self.hidden_layers.append(hidden_layer)
 
         self.out_layer = nn.Linear(hidden_dims[-1], out_dim)
+        self.to(self.device)
 
     def _format(self, x):
-        """
-        Convert state to tensor if not and shape it correctly for the training process
-        """
         if not isinstance(x, torch.Tensor):
             x = torch.tensor(x, device=self.device, dtype=torch.float32)
             x = x.unsqueeze(0)
@@ -39,6 +42,10 @@ class FCDAP(nn.Module):  # Fully connected discrete action policy for VPG
 
     def forward(self, state):
         x = self._format(state)
+        x = self.activation(self.conv1(x))
+        x = self.activation(self.conv2(x))
+        x = self.activation(self.conv3(x))
+        x = x.view(x.size(0), -1)
         x = self.activation(self.fc1(x))
 
         for fc_hidden in self.hidden_layers:
@@ -50,37 +57,44 @@ class FCDAP(nn.Module):  # Fully connected discrete action policy for VPG
     def full_pass(self, state):
         logits = self.forward(state)  # preferences over actions
 
-        # sample action from the probability distribution
+        # sample 2 actions from the probability distribution
         dist = torch.distributions.Categorical(logits=logits)
-        action = dist.sample()
-        log_p_action = dist.log_prob(action).unsqueeze(-1)
+        actions = dist.sample_n(2)
+        log_p_action = dist.log_prob(actions)
 
         # the entropy term encourage having evenly distributed actions
         entropy = dist.entropy().unsqueeze(-1)
 
-        return action.item(), log_p_action, entropy
+        return actions.squeeze().tolist(), log_p_action, entropy
 
     def select_action(self, state):
         """Helper function for when we just need to sample an action"""
         logits = self.forward(state)
         dist = torch.distributions.Categorical(logits=logits)
-        action = dist.sample()
-        return action.item()
+        actions = dist.sample_n(2)
+        return actions.squeeze().tolist()
 
     def select_greedy_action(self, state):
         logits = self.forward(state)
-        action = np.argmax(logits.detach().numpy())
-        return action
+        # action = np.argmax(logits.detach().numpy())
+        actions = logits.squeeze().detach().numpy().argsort()[-2:][::-1]
+        return actions
 
-class FCV(nn.Module):  # Fully connected value (state-value) for VPG
 
-    def __init__(self, device, in_dim, hidden_dims=(32, 32), activation=F.relu) -> None:
-        super(FCV, self).__init__()
+class ValueVPG(nn.Module):  # value (state-value) for VPG
+
+    def __init__(self, device, state_shape, hidden_dims=(32, 32), activation=F.relu) -> None:
+        super(ValueVPG, self).__init__()
 
         self.device = device
         self.activation = activation
+        C, H, W = state_shape
 
-        self.fc1 = nn.Linear(in_dim, hidden_dims[0])
+        self.conv1 = nn.Conv2d(in_channels=C, out_channels=16, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+
+        self.fc1 = nn.Linear(in_features=64 * H * W, out_features=hidden_dims[0])
         self.hidden_layers = nn.ModuleList()
 
         for i in range(len(hidden_dims) - 1):
@@ -88,6 +102,7 @@ class FCV(nn.Module):  # Fully connected value (state-value) for VPG
             self.hidden_layers.append(hidden_layer)
 
         self.out_layer = nn.Linear(hidden_dims[-1], 1)
+        self.to(self.device)
 
     def _format(self, x):
         if not isinstance(x, torch.Tensor):
@@ -97,6 +112,10 @@ class FCV(nn.Module):  # Fully connected value (state-value) for VPG
 
     def forward(self, state):
         x = self._format(state)
+        x = self.activation(self.conv1(x))
+        x = self.activation(self.conv2(x))
+        x = self.activation(self.conv3(x))
+        x = x.view(x.size(0), -1)
         x = self.activation(self.fc1(x))
 
         for fc_hidden in self.hidden_layers:
@@ -105,10 +124,11 @@ class FCV(nn.Module):  # Fully connected value (state-value) for VPG
         x = self.out_layer(x)
         return x
 
-class FCAC(nn.Module):  # Fully connected actor-critic A2C (Discrete action)
+
+class ActorCritic(nn.Module):  # Fully connected actor-critic A2C (Discrete action)
 
     def __init__(self, device, in_dim, out_dim, hidden_dims=(32, 32), activation=F.relu) -> None:
-        super(FCAC, self).__init__()
+        super(ActorCritic, self).__init__()
 
         self.device = device
         self.activation = activation

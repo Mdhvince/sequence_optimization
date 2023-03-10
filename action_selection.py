@@ -34,15 +34,7 @@ class GreedyStrategy:
         with torch.no_grad():
             q_values = model(state).cpu().detach().data.numpy().squeeze()
 
-        # action = np.argmax(q_values)
-        # Down the value of illegal actions
-        # if illegal_actions is not None:
-        #     while action in illegal_actions:
-        #         q_values[action] = -INF
-        #         action = np.argmax(q_values)
-
         top2actions = q_values.argsort()[-2:][::-1]
-
         return top2actions
 
 
