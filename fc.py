@@ -168,48 +168,6 @@ class FCAC(nn.Module):  # Fully connected actor-critic A2C (Discrete action)
         return value
 
 #################################################################################################### Value based methods
-class DQN(nn.Module):
-
-    def __init__(self, device, in_dim, out_dim, hidden_dims=(32, 32), activation=F.relu) -> None:
-        """
-        - in_dim: state dimension as input (if state composed of [x, y, z] location, in_dim=3)
-        - out_dim: number of action (will output the q(s, a) for all actions)
-        - hidden_dims: (32, 32, 16) will create 3 hidden layers of 32, 32, 16 units.
-        - activation: activation function
-        """
-        super(DQN, self).__init__()
-
-        self.device = device
-        self.activation = activation
-
-        self.fc1 = nn.Linear(in_dim, hidden_dims[0])
-        self.hidden_layers = nn.ModuleList()
-
-        for i in range(len(hidden_dims) - 1):
-            hidden_layer = nn.Linear(hidden_dims[i], hidden_dims[i + 1])
-            self.hidden_layers.append(hidden_layer)
-
-        self.out_layer = nn.Linear(hidden_dims[-1], out_dim)
-        self.to(self.device)
-
-    def _format(self, x):
-        """
-        Convert state to tensor if not and shape it correctly for the training process
-        """
-        if not isinstance(x, torch.Tensor):
-            x = torch.tensor(x, device=self.device, dtype=torch.float32)
-            x = x.unsqueeze(0)
-        return x
-
-    def forward(self, state):
-        x = self._format(state)
-        x = self.activation(self.fc1(x))
-
-        for fc_hidden in self.hidden_layers:
-            x = self.activation(fc_hidden(x))
-
-        x = self.out_layer(x)
-        return x
 
 class DuelingDQN(nn.Module):
     """
@@ -218,13 +176,18 @@ class DuelingDQN(nn.Module):
     and one for the Action-advantage function (return the advantage value of each action)
     """
 
-    def __init__(self, device, in_dim, out_dim, hidden_dims=(32, 32), activation=F.relu) -> None:
+    def __init__(self, device, state_shape, out_dim, hidden_dims=(32, 32), activation=F.relu):
         super(DuelingDQN, self).__init__()
 
         self.device = device
         self.activation = activation
+        C, H, W = state_shape
 
-        self.fc1 = nn.Linear(in_dim, hidden_dims[0])
+        self.conv1 = nn.Conv2d(in_channels=C, out_channels=16, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+
+        self.fc1 = nn.Linear(in_features=64*H*W, out_features=hidden_dims[0])
         self.hidden_layers = nn.ModuleList()
 
         for i in range(len(hidden_dims) - 1):
@@ -235,17 +198,12 @@ class DuelingDQN(nn.Module):
         self.advantage_value_output = nn.Linear(hidden_dims[-1], out_dim)
         self.to(self.device)
 
-    def _format(self, x):
-        """
-        Convert state to tensor if not and shape it correctly for the training process
-        """
-        if not isinstance(x, torch.Tensor):
-            x = torch.tensor(x, device=self.device, dtype=torch.float32)
-            x = x.unsqueeze(0)
-        return x
-
     def forward(self, state):
         x = self._format(state)
+        x = self.activation(self.conv1(x))
+        x = self.activation(self.conv2(x))
+        x = self.activation(self.conv3(x))
+        x = x.view(x.size(0), -1)
         x = self.activation(self.fc1(x))
 
         for fc_hidden in self.hidden_layers:
@@ -268,6 +226,15 @@ class DuelingDQN(nn.Module):
         q = state_value + advantage - advantage.mean(1, keepdim=True).expand_as(advantage)
 
         return q
+
+    def _format(self, x):
+        """
+        Convert state to tensor if not and shape it correctly for the training process
+        """
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x, device=self.device, dtype=torch.float32)
+            x = x.unsqueeze(0)
+        return x
 
 
 if __name__ == "__main__":

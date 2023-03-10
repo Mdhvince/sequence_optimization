@@ -1,11 +1,12 @@
 import warnings
+from itertools import count
 
 import torch
 import numpy as np
 import torch.optim as optim
 import torch.nn.functional as F
 
-from fc import DuelingDQN, DQN
+from fc import DuelingDQN
 from action_selection import EGreedyExpStrategy, GreedyStrategy
 from replay_buffer import ReplayBuffer
 
@@ -13,60 +14,63 @@ warnings.filterwarnings('ignore')
 
 
 class Agent:
-    def __init__(self, nS, nA, seed, device):
+    def __init__(self, state_shape, nA, seed, device):
+        """
+        :param state_shape: (CxHxW) shape of the state
+        :param nA:
+        :param seed:
+        :param device:
+        """
+        self.C = state_shape[0]
         self.seed = seed
         self.batch_size = 256
-        lr = .01
+        self.nA = nA
+        lr = .001
         self.gamma = .995
         self.device = device
         self.strategy = EGreedyExpStrategy(init_epsilon=1.0, min_epsilon=0.1)
         self.use_ddqn = True
-        self.use_dueling = True
         self.tau = 0.1
 
         self.memory_capacity = 100000
         self.memory = ReplayBuffer(self.memory_capacity, self.batch_size, self.seed)
 
-        # hidden_dims = (512, 128)
-        hidden_dims = (1024, 512, 512, 128)
+        hidden_dims = (512, 128)
+        # hidden_dims = (1024, 512, 512, 128)
 
-        if self.use_dueling:
-            self.behavior_policy = DuelingDQN(
-                self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
-            self.target_policy = DuelingDQN(self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
-        else:
-            self.behavior_policy = DQN(self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
-            self.target_policy = DQN(self.device, nS, nA, hidden_dims=hidden_dims).to(self.device)
+        self.behavior_policy = DuelingDQN(device, state_shape, nA, hidden_dims=hidden_dims).to(device)
+        self.target_policy = DuelingDQN(device, state_shape, nA, hidden_dims=hidden_dims).to(device)
 
-        self.optimizer = optim.RMSprop(self.behavior_policy.parameters(), lr=lr)
+        self.optimizer = optim.Adam(self.behavior_policy.parameters(), lr=lr)
 
     def store_experience(self, state, action, reward, next_state, done):
         self.memory.add(state, action, reward, next_state, done)
 
     def interact_with_environment(self, state, env, t_step, nA):
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
-        action = self.strategy.select_action(self.behavior_policy, state, nA, env.actions_history)
-        next_state, reward, done = env.step(state, action, t_step)
+        action = self.strategy.select_action(self.behavior_policy, state, nA)
+        next_state, reward, done = env.step(action, t_step)
         return action, reward, next_state, done
 
     def sample_and_learn(self):
         states, actions, rewards, next_states, dones = self.memory.sample(self.device)
-        if self.use_ddqn:
-            # Action that have the highest value: Index of action ==> FROM THE BEHAVIOR POLICY
-            argmax_q_next = self.behavior_policy(next_states).detach().argmax(dim=1).unsqueeze(-1)
+        states = states.reshape(self.batch_size, self.C, self.nA, -1)
+        next_states = next_states.reshape(self.batch_size, self.C, self.nA, -1)
 
-            # Action-values of "best" actions  ==> FROM THE TARGET POLICY
-            Q_targets_next = self.target_policy(next_states).gather(1, argmax_q_next)
-            Q_targets = rewards + (self.gamma * Q_targets_next * (1 - dones))
-        else:
-            # highest action-values : Q(Sₜ₊₁,a)
-            Q_targets_next = self.target_policy(next_states).detach().max(1)[0].unsqueeze(1)
-            Q_targets = rewards + (self.gamma * Q_targets_next * (1 - dones))
+        states = states.squeeze(1)
+        next_states = next_states.squeeze(1)
+
+        # Action that have the highest value: Index of action ==> FROM THE BEHAVIOR POLICY
+        argmax_q_next = self.behavior_policy(next_states).detach().argmax(dim=1).unsqueeze(-1)
+        # Action-values of "best" actions  ==> FROM THE TARGET POLICY
+        Q_targets_next = self.target_policy(next_states).gather(1, argmax_q_next)
+        Q_targets = rewards + (self.gamma * Q_targets_next * (1 - dones))
+
 
         actions = actions.to(torch.int64)
         Q_expected = self.behavior_policy(states).gather(1, actions)
 
-        loss = F.huber_loss(Q_expected, Q_targets, delta=np.inf)
+        loss = F.mse_loss(Q_expected, Q_targets)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -78,10 +82,11 @@ class Agent:
 
         s, d = env.reset(shuffle), False
 
-        for ts in range(env.N_SEATS):
+        for ts in count():
             with torch.no_grad():
-                a = GreedyStrategy.select_action(self.behavior_policy, s, env.actions_history)
-            s, r, d = env.step(s, a, ts)
+                a = GreedyStrategy.select_action(self.behavior_policy, s)
+
+            s, r, d = env.step(a, ts)
 
             total_rewards += r
             stoppage_pp += env.stoppage_per_position

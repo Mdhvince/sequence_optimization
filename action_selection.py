@@ -34,14 +34,16 @@ class GreedyStrategy:
         with torch.no_grad():
             q_values = model(state).cpu().detach().data.numpy().squeeze()
 
-        action = np.argmax(q_values)
+        # action = np.argmax(q_values)
         # Down the value of illegal actions
-        if illegal_actions is not None:
-            while action in illegal_actions:
-                q_values[action] = -INF
-                action = np.argmax(q_values)
+        # if illegal_actions is not None:
+        #     while action in illegal_actions:
+        #         q_values[action] = -INF
+        #         action = np.argmax(q_values)
 
-        return action
+        top2actions = q_values.argsort()[-2:][::-1]
+
+        return top2actions
 
 
 def e_greedy_action_selection(model, state, epsilon, nA, illegal_actions=None):
@@ -50,16 +52,20 @@ def e_greedy_action_selection(model, state, epsilon, nA, illegal_actions=None):
         with torch.no_grad():
             q_values = model(state).cpu().detach().data.numpy().squeeze()
         model.train()
-        action = np.argmax(q_values)
+        # action = np.argmax(q_values)
 
         # Down the value of illegal actions
-        if illegal_actions is not None:
-            while action in illegal_actions:
-                q_values[action] = -INF
-                action = np.argmax(q_values)
+        # if illegal_actions is not None:
+        #     while action in illegal_actions:
+        #         q_values[action] = -INF
+        #         action = np.argmax(q_values)
+
+        top2actions = q_values.argsort()[-2:][::-1]
+
     else:
-        action = np.random.randint(nA)
-    return action
+        # action = np.random.randint(nA)
+        top2actions = np.random.randint(0, nA, size=2)
+    return top2actions
 
 
 if __name__ == "__main__":
