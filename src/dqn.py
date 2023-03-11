@@ -66,7 +66,8 @@ class Agent:
         next_states = next_states.squeeze(1)
 
         # Action that have the highest value: Index of action ==> FROM THE BEHAVIOR POLICY
-        argmax_q_next = self.behavior_policy(next_states).detach().argmax(dim=1).unsqueeze(-1)
+        # argmax_q_next = self.behavior_policy(next_states).detach().argmax(dim=1).unsqueeze(-1)
+        _, argmax_q_next = torch.topk(self.behavior_policy(next_states).detach(), k=2, dim=1)
         # Action-values of "best" actions  ==> FROM THE TARGET POLICY
         Q_targets_next = self.target_policy(next_states).gather(1, argmax_q_next)
         Q_targets = rewards + (self.gamma * Q_targets_next * (1 - dones))
@@ -130,7 +131,7 @@ class Agent:
 
 
 if __name__ == "__main__":
-    writer = SummaryWriter("runs/dqns")
+    writer = SummaryWriter("../runs/dqns")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     SEED = 42
@@ -142,8 +143,8 @@ if __name__ == "__main__":
     np.random.seed(SEED)
     random.seed(SEED)
 
-    wc = pd.read_csv("notebooks/WC.csv", sep=";").iloc[:20, :]
-    wc = wc.sample(frac=1, random_state=SEED)
+    wc = pd.read_csv("../notebooks/WC.csv", sep=";").sample(frac=1, random_state=SEED)
+    wc = wc.iloc[:20, :]
 
     positions = wc.columns
     takt_time = np.ones(len(positions)) * 59
@@ -151,9 +152,14 @@ if __name__ == "__main__":
 
     env = EnvSeqV1(wc, takt_time, buffer_percent)
     nA = env.action_space
-    state_shape = env.reset().shape
+    s = env.reset()
+    state_shape = s.shape
 
     agent = Agent(state_shape, nA, SEED, device)
+    writer.add_graph(
+        agent.behavior_policy,
+        torch.tensor(s, device=device, dtype=torch.float32).unsqueeze(0)
+    )
 
     last_100_reward = deque(maxlen=100)
     last_100_stoppage_duration = deque(maxlen=100)

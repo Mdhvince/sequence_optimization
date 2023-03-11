@@ -70,9 +70,9 @@ class EnvSeqV1:
         stoppage_func = lambda delay, max_delay: 0 if delay < max_delay else delay - max_delay
 
         self.delay_matrix = np.zeros((self.N_SEATS, self.N_POSITIONS))
+        self.delay_per_position = np.zeros(self.N_POSITIONS)
         self.stoppage_matrix = np.zeros((self.N_SEATS, self.N_POSITIONS))
         self.stoppage_per_position = np.zeros(self.N_POSITIONS)
-        self.delay_per_position = np.zeros(self.N_POSITIONS)
 
         for n, row in enumerate(self.seat_sequence):
             delay_tmp = row - self.TAKT_TIME_PP + self.delay_per_position
@@ -95,10 +95,12 @@ class EnvSeqV1:
     def build_state(self):
         sequence = np.copy(self.seat_sequence)
         delay = np.copy(self.delay_matrix)
-        relative_delay = delay / self.MAX_DELAY_PP.reshape(1, -1)          # how close the delay is to become a stoppage
+
+        relative_sequence = sequence / np.max(sequence)
+        relative_delay = delay / self.MAX_DELAY_PP.reshape(1, -1)  # how close the delay is to become a stoppage
         # stoppage = np.copy(self.stoppage_matrix)
 
-        state = np.stack((sequence, relative_delay), axis=0)
+        state = np.stack((relative_sequence, relative_delay), axis=0)
         return state
 
 

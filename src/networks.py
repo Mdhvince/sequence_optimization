@@ -1,7 +1,6 @@
 import warnings
 
 import torch
-import numpy as np
 from torch import nn
 import torch.nn.functional as F
 
@@ -233,7 +232,6 @@ class DuelingDQN(nn.Module):
         state_value = self.state_value_output(x)
 
         # The fact that A and V are separated yield the ability to capture different features
-
         # A = Q - V  --> Q = V + A
         # But once we have Q, we cannot recover uniquely V and A...
         # To address this we will subtract the mean of A from Q, this will shift A and V by a
@@ -242,9 +240,7 @@ class DuelingDQN(nn.Module):
         # expand the scalar to the same size as advantage, so we can add them up to recreate Q
         # because a = q - v so q = v + a
         state_value = state_value.expand_as(advantage)
-
         q = state_value + advantage - advantage.mean(1, keepdim=True).expand_as(advantage)
-
         return q
 
     def _format(self, x):
