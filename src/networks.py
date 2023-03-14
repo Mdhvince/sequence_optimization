@@ -190,9 +190,6 @@ class ActorCritic(nn.Module):  # Fully connected actor-critic A2C (Discrete acti
 
 class DuelingDQN(nn.Module):
     """
-    Dueling Deep Q-Network Architecture.
-    Same as DQN but using 2 outputs : One for the State-value function (return a single number)
-    and one for the Action-advantage function (return the advantage value of each action)
     """
 
     def __init__(self, device, state_shape, out_dim, hidden_dims=(32, 32), activation=F.relu):

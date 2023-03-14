@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from src.networks import DuelingDQN
-from src.environment import EnvSeqV1
+from src.environment import EnvSeqV1, EnvSeqV2
 from src.action_selection import EGreedyExpStrategy, GreedyStrategy
 from src.replay_buffer import ReplayBuffer
 
@@ -30,6 +30,7 @@ class Agent:
         self.seed = seed
         self.batch_size = 256
         self.nA = nA
+        # self.nA_step = nA_step
         lr = .001
         self.gamma = .995
         self.device = device
@@ -59,19 +60,19 @@ class Agent:
 
     def sample_and_learn(self):
         states, actions, rewards, next_states, dones = self.memory.sample(self.device)
-        states = states.reshape(self.batch_size, self.C, self.nA, -1)
-        next_states = next_states.reshape(self.batch_size, self.C, self.nA, -1)
+        states = states.reshape(self.batch_size, self.C, states.shape[1], -1)
+        next_states = next_states.reshape(self.batch_size, self.C, next_states.shape[1], -1)
 
         states = states.squeeze(1)
         next_states = next_states.squeeze(1)
 
         # Action that have the highest value: Index of action ==> FROM THE BEHAVIOR POLICY
-        # argmax_q_next = self.behavior_policy(next_states).detach().argmax(dim=1).unsqueeze(-1)
-        _, argmax_q_next = torch.topk(self.behavior_policy(next_states).detach(), k=2, dim=1)
+        argmax_q_next = self.behavior_policy(next_states).detach().argmax(dim=1).unsqueeze(-1)
+        # _, argmax_q_next = torch.topk(self.behavior_policy(next_states).detach(), k=self.nA_step, dim=1)
+
         # Action-values of "best" actions  ==> FROM THE TARGET POLICY
         Q_targets_next = self.target_policy(next_states).gather(1, argmax_q_next)
         Q_targets = rewards + (self.gamma * Q_targets_next * (1 - dones))
-
 
         actions = actions.to(torch.int64)
         Q_expected = self.behavior_policy(states).gather(1, actions)
@@ -96,7 +97,6 @@ class Agent:
 
             total_rewards += r
             stoppage_pp += env.stoppage_per_position
-            seq.append(a)
 
             if d: break
 
@@ -130,6 +130,7 @@ class Agent:
                 t.data.copy_(b.data)
 
 
+
 if __name__ == "__main__":
     writer = SummaryWriter("../runs/dqns")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -144,13 +145,13 @@ if __name__ == "__main__":
     random.seed(SEED)
 
     wc = pd.read_csv("../notebooks/WC.csv", sep=";").sample(frac=1, random_state=SEED)
-    wc = wc.iloc[:20, :]
+    wc = wc.iloc[:50, :]
 
     positions = wc.columns
     takt_time = np.ones(len(positions)) * 59
     buffer_percent = np.array([1.45, 1.60, 1.25, 1.50, 1.25, 1.25, 1.25, 1.50, 1.25, 1.25, 1.25, 1.25, 1.25])
 
-    env = EnvSeqV1(wc, takt_time, buffer_percent)
+    env = EnvSeqV2(wc, takt_time, buffer_percent)
     nA = env.action_space
     s = env.reset()
     state_shape = s.shape
@@ -167,7 +168,7 @@ if __name__ == "__main__":
 
     running_mean_100 = -np.inf
 
-    for i_episode in range(1, N_EPISODES + 1):
+    for e in range(1, N_EPISODES + 1):
         shuffle = False
         state, is_terminal = env.reset(shuffle), False
 
@@ -181,15 +182,14 @@ if __name__ == "__main__":
                 agent.sync_weights(use_polyak_averaging=True)
             if done: break
 
-
         reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle)
         last_100_reward.append(reward_episode)
         last_100_stoppage_pp.append(stoppage_pp / 60)
 
-        mean_stoppage_per_position = np.mean(np.array(last_100_stoppage_pp), axis=0)
-        writer.add_scalars(
-            f"Mean down time per position (minutes)", dict(zip(positions, mean_stoppage_per_position)), i_episode
-        )
-        writer.add_scalar("Mean reward", np.mean(last_100_reward), i_episode)
+        if e % 100 == 0:
+            mean_stoppage_per_position = dict(zip(positions, np.mean(np.array(last_100_stoppage_pp), axis=0)))
+            mean_rewards = np.mean(last_100_reward)
+            writer.add_scalars("Mean down time per position in minutes", mean_stoppage_per_position, e)
+            writer.add_scalar("Mean reward", mean_rewards, e)
 
     writer.close()
