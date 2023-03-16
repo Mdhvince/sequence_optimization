@@ -144,8 +144,10 @@ if __name__ == "__main__":
     np.random.seed(SEED)
     random.seed(SEED)
 
-    wc = pd.read_csv("../notebooks/WC.csv", sep=";").sample(frac=1, random_state=SEED)
-    wc = wc.iloc[:50, :]
+    wc = pd.read_csv("../notebooks/WC.csv", sep=";")
+    wc = wc.iloc[:20, :].sample(frac=1, random_state=SEED)
+
+    # wc2 = wc.iloc[20:40, :]
 
     positions = wc.columns
     takt_time = np.ones(len(positions)) * 59

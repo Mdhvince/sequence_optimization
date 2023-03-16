@@ -9,7 +9,7 @@ import pandas as pd
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
-from environment import EnvSeqV1
+from environment import EnvSeqV1, EnvSeqV2
 from networks import PolicyVPG, ValueVPG
 
 warnings.filterwarnings('ignore')
@@ -138,19 +138,18 @@ if __name__ == "__main__":
     takt_time = np.ones(len(positions)) * 59
     buffer_percent = np.array([1.45, 1.60, 1.25, 1.50, 1.25, 1.25, 1.25, 1.50, 1.25, 1.25, 1.25, 1.25, 1.25])
 
-    env = EnvSeqV1(wc, takt_time, buffer_percent)
+    env = EnvSeqV2(wc, takt_time, buffer_percent)
     nA = env.action_space
     state_shape = env.reset().shape
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     agent = Agent(state_shape, nA, device)
 
-    last_100_score = deque(maxlen=100)
-    last_100_stoppage_duration = deque(maxlen=100)
+    last_100_reward = deque(maxlen=100)
     last_100_stoppage_pp = deque(maxlen=100)
 
     for i_episode in range(1, n_episodes + 1):
-        shuffle = True
+        shuffle = False
         state, is_terminal = env.reset(shuffle), False
 
         agent.reset_metrics()
@@ -164,13 +163,14 @@ if __name__ == "__main__":
         agent.rewards.append(next_value)
         agent.learn()
 
-        total_rewards, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle)
+        reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle)
+        last_100_reward.append(reward_episode)
         last_100_stoppage_pp.append(stoppage_pp / 60)
 
-        mean_stoppage_per_position = np.mean(np.array(last_100_stoppage_pp), axis=0)
-        writer.add_scalars(
-            f"Mean down time per position (minutes)",
-            dict(zip(positions, mean_stoppage_per_position)), i_episode
-        )
+        if e % 100 == 0:
+            mean_stoppage_per_position = dict(zip(positions, np.mean(np.array(last_100_stoppage_pp), axis=0)))
+            mean_rewards = np.mean(last_100_reward)
+            writer.add_scalars("Mean down time per position in minutes", mean_stoppage_per_position, e)
+            writer.add_scalar("Mean reward", mean_rewards, e)
 
     writer.close()

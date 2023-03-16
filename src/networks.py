@@ -1,5 +1,6 @@
 import warnings
 
+import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -10,7 +11,7 @@ AS_NEW_ROW = 0
 AS_NEW_COLUMN = 1
 
 ################################################################################################### Policy based methods
-class PolicyVPG(nn.Module):  # discrete action policy for VPG
+class PolicyVPG(nn.Module):
 
     def __init__(self, device, state_shape, out_dim, hidden_dims=(32, 32), activation=F.relu) -> None:
         super(PolicyVPG, self).__init__()
@@ -56,31 +57,31 @@ class PolicyVPG(nn.Module):  # discrete action policy for VPG
     def full_pass(self, state):
         logits = self.forward(state)  # preferences over actions
 
-        # sample 2 actions from the probability distribution
+        # sample action from the probability distribution
         dist = torch.distributions.Categorical(logits=logits)
-        actions = dist.sample_n(2)
-        log_p_action = dist.log_prob(actions)
+        action = dist.sample()
+        log_p_action = dist.log_prob(action)
 
         # the entropy term encourage having evenly distributed actions
         entropy = dist.entropy().unsqueeze(-1)
 
-        return actions.squeeze().tolist(), log_p_action, entropy
+        return action.item(), log_p_action, entropy
 
     def select_action(self, state):
         """Helper function for when we just need to sample an action"""
         logits = self.forward(state)
         dist = torch.distributions.Categorical(logits=logits)
-        actions = dist.sample_n(2)
-        return actions.squeeze().tolist()
+        action = dist.sample()
+        return action.item()
+
 
     def select_greedy_action(self, state):
         logits = self.forward(state)
-        # action = np.argmax(logits.detach().numpy())
-        actions = logits.squeeze().detach().numpy().argsort()[-2:][::-1]
-        return actions
+        action = np.argmax(logits.detach().cpu().numpy())
+        return action
 
 
-class ValueVPG(nn.Module):  # value (state-value) for VPG
+class ValueVPG(nn.Module):
 
     def __init__(self, device, state_shape, hidden_dims=(32, 32), activation=F.relu) -> None:
         super(ValueVPG, self).__init__()
