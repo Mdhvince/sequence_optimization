@@ -9,11 +9,10 @@ import pandas as pd
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
-from environment import EnvSeqV1, EnvSeqV2
+from environment import EnvSeqV2
 from networks import PolicyVPG, ValueVPG
 
 warnings.filterwarnings('ignore')
-
 
 class Agent:
     def __init__(self, state_shape, nA, device):
@@ -44,7 +43,7 @@ class Agent:
         action, logpa, entropy = self.policy.full_pass(state)
         next_state, reward, is_terminal = env.step(action, t_step)
 
-        self.logpas.append(logpa.squeeze())
+        self.logpas.append(logpa)
         self.rewards.append(reward)
         self.entropies.append(entropy)
         self.values.append(self.value_model(state))
@@ -58,8 +57,8 @@ class Agent:
         T = len(self.rewards)
         discounts = np.logspace(0, T, num=T, base=self.gamma, endpoint=False)
         returns = np.array([np.sum(discounts[:T - t] * self.rewards[t:]) for t in range(T)])
-        discounts = torch.FloatTensor(discounts[:-1]).unsqueeze(1)
-        returns = torch.FloatTensor(returns[:-1]).unsqueeze(1)
+        discounts = torch.FloatTensor(discounts[:-1]).unsqueeze(1).to(self.device)
+        returns = torch.FloatTensor(returns[:-1]).unsqueeze(1).to(self.device)
 
         self.logpas = torch.cat(self.logpas)
         self.entropies = torch.cat(self.entropies)
