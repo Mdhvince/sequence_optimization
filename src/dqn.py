@@ -11,9 +11,9 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from src.networks import DuelingDQN
-from src.environment import EnvSeqV1, EnvSeqV2
-from src.action_selection import EGreedyExpStrategy, GreedyStrategy
-from src.replay_buffer import ReplayBuffer
+from src.environment import EnvSeqV2
+from src.utils.action_selection import EGreedyExpStrategy, GreedyStrategy
+from src.utils.replay_buffer import ReplayBuffer
 
 warnings.filterwarnings('ignore')
 

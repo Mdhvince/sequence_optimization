@@ -5,6 +5,29 @@ import numpy as np
 warnings.filterwarnings('ignore')
 
 
+def reward_of_optimized_sequence(wc, takt_time, buffer_percent):
+    seat_sequence = np.copy(wc.values)
+
+    # Get the reward of the optimized sequence
+    delay_func = lambda x: 0 if x < 0 else x
+    stoppage_func = lambda delay, max_delay: 0 if delay < max_delay else delay - max_delay
+
+    N_POSITIONS = len(wc.columns)
+    delay_per_position = np.zeros(N_POSITIONS)
+    stoppage_per_position = np.zeros(N_POSITIONS)
+    max_delay_pp = takt_time * buffer_percent - takt_time
+
+    for n, row in enumerate(seat_sequence):
+        delay_tmp = row - takt_time + delay_per_position
+        delay_per_position = np.array([delay_func(i) for i in delay_tmp])
+        stoppage = np.array([stoppage_func(i, max_delay_pp[n]) for n, i in enumerate(delay_per_position)])
+        stoppage_per_position += np.copy(stoppage)
+
+    sequence_stoppage = np.sum(stoppage_per_position)
+    r = 1 - sequence_stoppage
+    return r
+
+
 class EnvSeqV2:
     def __init__(self, workcontent, takt_time, buffer_percent):
         """

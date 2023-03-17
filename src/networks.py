@@ -74,7 +74,6 @@ class PolicyVPG(nn.Module):
         action = dist.sample()
         return action.item()
 
-
     def select_greedy_action(self, state):
         logits = self.forward(state)
         action = np.argmax(logits.detach().cpu().numpy())

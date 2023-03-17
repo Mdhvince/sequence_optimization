@@ -15,7 +15,7 @@ from networks import PolicyVPG, ValueVPG
 warnings.filterwarnings('ignore')
 
 class Agent:
-    def __init__(self, state_shape, nA, device):
+    def __init__(self, state_shape, nA, device, resume=False, checkpoint=None):
         self.device = device
         self.gamma = .99
         lr_p = 0.0005
@@ -25,19 +25,45 @@ class Agent:
         self.entropy_loss_weight = 0.001
         self.C = state_shape[0]
 
-        # Define policy network, value network and max gradient for gradient clipping
-        self.policy = PolicyVPG(self.device, state_shape, nA, hidden_dims=hidden_dims_p).to(self.device)
-        self.p_optimizer = optim.Adam(self.policy.parameters(), lr=lr_p)
-        self.p_max_grad = 1
+        # Define policy network, value network, optimizers and max gradient for gradient clipping
+        self.policy = PolicyVPG(device, state_shape, nA, hidden_dims=hidden_dims_p)
+        self.value_model = ValueVPG(device, state_shape, hidden_dims=hidden_dims_v)
 
-        self.value_model = ValueVPG(self.device, state_shape, hidden_dims=hidden_dims_v).to(self.device)
+        self.p_optimizer = optim.Adam(self.policy.parameters(), lr=lr_p)
         self.v_optimizer = optim.Adam(self.value_model.parameters(), lr=lr_v)
+
+        self.p_max_grad = 1
         self.v_max_grad = float("inf")
 
         self.logpas = []
         self.rewards = []
         self.entropies = []
         self.values = []
+
+        if resume:
+            assert checkpoint is not None
+            print("Resume training")
+            self.policy.load_state_dict(checkpoint["policy_state_dict"])
+            self.value_model.load_state_dict(checkpoint["value_state_dict"])
+            self.p_optimizer.load_state_dict(checkpoint["p_optimizer_state_dict"])
+            self.v_optimizer.load_state_dict(checkpoint["v_optimizer_state_dict"])
+
+            for param in self.policy.parameters():
+                param.requires_grad = True
+
+            for param in self.value_model.parameters():
+                param.requires_grad = True
+
+            for s in self.p_optimizer.state.values():
+                for k, v in s.items():
+                    if isinstance(v, torch.Tensor):
+                        s[k] = v.to(device)
+
+            for s in self.v_optimizer.state.values():
+                for k, v in s.items():
+                    if isinstance(v, torch.Tensor):
+                        s[k] = v.to(device)
+
 
     def interact_with_environment(self, state, env, t_step):
         action, logpa, entropy = self.policy.full_pass(state)
@@ -121,17 +147,15 @@ if __name__ == "__main__":
     writer = SummaryWriter("runs/vpg")
 
     seed = 42
-    model_path = "agent_vpg.pt"
+    model_path = "weights/vpg.pt"
     n_episodes = 15000
 
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
-    wc = pd.read_csv("notebooks/WC.csv", sep=";").iloc[:20, :]
+    wc = pd.read_csv("../notebooks/WC.csv", sep=";").iloc[:20, :]
     wc = wc.sample(frac=1, random_state=seed)
-
-    print(len(wc))
 
     positions = wc.columns
     takt_time = np.ones(len(positions)) * 59
@@ -146,8 +170,9 @@ if __name__ == "__main__":
 
     last_100_reward = deque(maxlen=100)
     last_100_stoppage_pp = deque(maxlen=100)
+    mean_rewards = -np.inf
 
-    for i_episode in range(1, n_episodes + 1):
+    for e in range(1, n_episodes + 1):
         shuffle = False
         state, is_terminal = env.reset(shuffle), False
 
@@ -171,5 +196,18 @@ if __name__ == "__main__":
             mean_rewards = np.mean(last_100_reward)
             writer.add_scalars("Mean down time per position in minutes", mean_stoppage_per_position, e)
             writer.add_scalar("Mean reward", mean_rewards, e)
+
+        if mean_rewards == 20.0:
+            torch.save({
+                'episode': e,
+                'mean_100_reward': mean_rewards,
+                'policy_state_dict': agent.policy.state_dict(),
+                'value_state_dict': agent.value_model.state_dict(),
+                'p_optimizer_state_dict': agent.p_optimizer.state_dict(),
+                'v_optimizer_state_dict': agent.v_optimizer.state_dict(),
+            }, model_path)
+
+            print("Finished.")
+            break
 
     writer.close()

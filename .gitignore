@@ -6,3 +6,4 @@ venv/
 runs/
 notebooks/
 deprecated/
+__pycache__/
