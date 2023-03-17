@@ -1,3 +1,4 @@
+import argparse
 import random
 import warnings
 from itertools import count
@@ -14,8 +15,10 @@ from networks import PolicyVPG, ValueVPG
 
 warnings.filterwarnings('ignore')
 
+
+
 class Agent:
-    def __init__(self, state_shape, nA, device, resume=False, checkpoint=None):
+    def __init__(self, state_shape, nA, device, run_type="train", checkpoint=None):
         self.device = device
         self.gamma = .99
         lr_p = 0.0005
@@ -40,19 +43,13 @@ class Agent:
         self.entropies = []
         self.values = []
 
-        if resume:
+        if run_type in ["resume", "evaluate"]:
             assert checkpoint is not None
             print("Resume training")
             self.policy.load_state_dict(checkpoint["policy_state_dict"])
             self.value_model.load_state_dict(checkpoint["value_state_dict"])
             self.p_optimizer.load_state_dict(checkpoint["p_optimizer_state_dict"])
             self.v_optimizer.load_state_dict(checkpoint["v_optimizer_state_dict"])
-
-            for param in self.policy.parameters():
-                param.requires_grad = True
-
-            for param in self.value_model.parameters():
-                param.requires_grad = True
 
             for s in self.p_optimizer.state.values():
                 for k, v in s.items():
@@ -67,7 +64,7 @@ class Agent:
 
     def interact_with_environment(self, state, env, t_step):
         action, logpa, entropy = self.policy.full_pass(state)
-        next_state, reward, is_terminal = env.step(action, t_step)
+        next_state, reward, is_terminal, _ = env.step(action, t_step)
 
         self.logpas.append(logpa)
         self.rewards.append(reward)
@@ -126,11 +123,11 @@ class Agent:
         for ts in count():
             with torch.no_grad():
                 a = self.policy.select_greedy_action(s)
-            s, r, d = env.step(a, ts)
+            s, r, d, info = env.step(a, ts)
 
             total_rewards += r
             stoppage_pp += env.stoppage_per_position
-            seq.append(a)
+            seq.append(info)
             if d: break
 
         self.policy.train()
@@ -143,19 +140,42 @@ class Agent:
         self.values = []
 
 
+def parse_argument():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run_type", type=str, choices=["train", "resume", "evaluate"])
+    parser.add_argument("--target_reward", type=int, help="only in train mode")
+    parser.add_argument("--model_path", default="weights/vpg.pt", type=str)
+    parser.add_argument("--seed", default=101, type=int)
+    parser.add_argument("--wc_path", type=str, help="path of the csv file of workcontent")
+    parser.add_argument("--n_episodes", default=20000, type=int, help="number of additional episodes")
+    parser.add_argument("--print_every", default=100, type=int)
+    parser.add_argument("--tensorboard", default=0, type=int, choices=[0, 1])
+    parser.add_argument("--tensorboard_path", default="runs/vpg", type=str)
+    return parser
+
+
+def save_state_dict(args, agent, mean_rewards, episode):
+    torch.save({
+        'episode': episode,
+        'mean_100_reward': mean_rewards,
+        'policy_state_dict': agent.policy.state_dict(),
+        'value_state_dict': agent.value_model.state_dict(),
+        'p_optimizer_state_dict': agent.p_optimizer.state_dict(),
+        'v_optimizer_state_dict': agent.v_optimizer.state_dict(),
+    }, args.model_path)
+
+
 if __name__ == "__main__":
-    writer = SummaryWriter("runs/vpg")
+    parser = parse_argument()
+    args = parser.parse_args()
 
-    seed = 42
-    model_path = "weights/vpg.pt"
-    n_episodes = 15000
+    writer = SummaryWriter(args.tensorboard_path)
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-
-    wc = pd.read_csv("../notebooks/WC.csv", sep=";").iloc[:20, :]
-    wc = wc.sample(frac=1, random_state=seed)
+    wc = pd.read_csv(args.wc_path, sep=";").iloc[:20, :]
+    wc = wc.sample(frac=1, random_state=args.seed)
 
     positions = wc.columns
     takt_time = np.ones(len(positions)) * 59
@@ -166,48 +186,70 @@ if __name__ == "__main__":
     state_shape = env.reset().shape
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    agent = Agent(state_shape, nA, device)
+    checkpoint = None
+    last_episode = 0
+    last_best_reward = -np.inf
 
+    if args.run_type in ["resume", "evaluate"]:
+        checkpoint = torch.load(args.model_path, map_location=device)
+        last_episode = checkpoint["episode"]
+        last_best_reward = checkpoint['mean_100_reward']
+        print(f"last mean reward: {last_best_reward}\n")
+
+    if args.run_type == "train":
+        assert args.target_reward is not None
+
+    agent = Agent(state_shape, nA, device, run_type=args.run_type, checkpoint=checkpoint)
+
+    # Resume
     last_100_reward = deque(maxlen=100)
     last_100_stoppage_pp = deque(maxlen=100)
     mean_rewards = -np.inf
 
-    for e in range(1, n_episodes + 1):
-        shuffle = False
-        state, is_terminal = env.reset(shuffle), False
+    if args.run_type in ["train", "resume"]:
+        for e in range(last_episode, last_episode + args.n_episodes):
+            shuffle = False
+            state, is_terminal = env.reset(shuffle), False
+            agent.reset_metrics()
 
-        agent.reset_metrics()
+            for t_step in count():
+                next_state, is_terminal = agent.interact_with_environment(state, env, t_step)
+                state = next_state
+                if is_terminal: break
 
-        for t_step in count():
-            next_state, is_terminal = agent.interact_with_environment(state, env, t_step)
-            state = next_state
-            if is_terminal: break
+            next_value = 0 if is_terminal else agent.value_model(state).detach().item()
+            agent.rewards.append(next_value)
+            agent.learn()
 
-        next_value = 0 if is_terminal else agent.value_model(state).detach().item()
-        agent.rewards.append(next_value)
-        agent.learn()
+            reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle)
+            last_100_reward.append(reward_episode)
+            last_100_stoppage_pp.append(stoppage_pp / 60)
 
-        reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle)
-        last_100_reward.append(reward_episode)
-        last_100_stoppage_pp.append(stoppage_pp / 60)
+            if e % args.print_every == 0:
+                mean_stoppage_per_position = dict(zip(positions, np.mean(np.array(last_100_stoppage_pp), axis=0)))
+                mean_rewards = np.mean(last_100_reward)
 
-        if e % 100 == 0:
-            mean_stoppage_per_position = dict(zip(positions, np.mean(np.array(last_100_stoppage_pp), axis=0)))
-            mean_rewards = np.mean(last_100_reward)
-            writer.add_scalars("Mean down time per position in minutes", mean_stoppage_per_position, e)
-            writer.add_scalar("Mean reward", mean_rewards, e)
+                if args.tensorboard:
+                    writer.add_scalars("Mean down time per position in minutes", mean_stoppage_per_position, e)
+                    writer.add_scalar("Mean reward", mean_rewards, e)
+                else:
+                    print(f"Episode {e} \t {mean_rewards}")
+                    print(f"Episode {e} \t {mean_stoppage_per_position}")
+                    print("")
 
-        if mean_rewards == 20.0:
-            torch.save({
-                'episode': e,
-                'mean_100_reward': mean_rewards,
-                'policy_state_dict': agent.policy.state_dict(),
-                'value_state_dict': agent.value_model.state_dict(),
-                'p_optimizer_state_dict': agent.p_optimizer.state_dict(),
-                'v_optimizer_state_dict': agent.v_optimizer.state_dict(),
-            }, model_path)
+            if (args.run_type == "resume") and (mean_rewards >= last_best_reward):
+                save_state_dict(args, agent, mean_rewards, e)
+                last_best_reward = mean_rewards
 
-            print("Finished.")
-            break
+            elif (args.run_type == "train") and (mean_rewards >= args.target_reward):
+                save_state_dict(args, agent, mean_rewards, e)
+                print("Finished.")
+                break
+    else:
+        reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle=False)
+        print(wc)
+        print("")
+        print(stoppage_pp)
+        print(sequence)
 
     writer.close()

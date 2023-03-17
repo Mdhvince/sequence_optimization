@@ -72,7 +72,7 @@ class EnvSeqV2:
         next_state = self.build_state()
         reward = self.reward()
 
-        return next_state, reward, is_terminal
+        return next_state, reward, is_terminal, (row_id, direction)
 
     def get_movement_from_action(self, action):
         if action < self.N_SEATS:
