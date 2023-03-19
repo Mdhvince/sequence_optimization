@@ -98,7 +98,6 @@ class Agent:
 
         self.p_optimizer.zero_grad()
         loss.backward()
-        # clip the gradient
         torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.p_max_grad)
         self.p_optimizer.step()
 
@@ -139,22 +138,31 @@ class Agent:
         self.entropies = []
         self.values = []
 
+# END Agent
+
 
 def parse_argument():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_type", type=str, choices=["train", "resume", "evaluate"])
     parser.add_argument("--target_reward", type=int, help="only in train mode")
-    parser.add_argument("--model_path", default="weights/vpg.pt", type=str)
-    parser.add_argument("--seed", default=101, type=int)
+    parser.add_argument("--model_path", type=str)
+    parser.add_argument("--seed", type=int)
     parser.add_argument("--wc_path", type=str, help="path of the csv file of workcontent")
-    parser.add_argument("--n_episodes", default=20000, type=int, help="number of additional episodes")
-    parser.add_argument("--print_every", default=100, type=int)
-    parser.add_argument("--tensorboard", default=0, type=int, choices=[0, 1])
-    parser.add_argument("--tensorboard_path", default="runs/vpg", type=str)
-    return parser
+    parser.add_argument("--n_episodes", type=int, help="number of additional episodes")
+    parser.add_argument("--print_every", type=int)
+    parser.add_argument("--tensorboard", type=int, choices=[0, 1])
+    parser.add_argument("--tensorboard_path", type=str)
+    parser.add_argument("--debug", type=int, choices=[0, 1], help="in debug mode, no weights will be saved")
+    return parser.parse_args()
 
+def load_model(args, device):
+    checkpoint = torch.load(args.model_path, map_location=device)
+    last_episode = checkpoint["episode"]
+    last_best_reward = checkpoint['mean_100_reward']
+    print(f"last mean reward: {last_best_reward}\n")
+    return checkpoint, last_episode, last_best_reward
 
-def save_state_dict(args, agent, mean_rewards, episode):
+def save_model(args, agent, mean_rewards, episode):
     torch.save({
         'episode': episode,
         'mean_100_reward': mean_rewards,
@@ -164,15 +172,35 @@ def save_state_dict(args, agent, mean_rewards, episode):
         'v_optimizer_state_dict': agent.v_optimizer.state_dict(),
     }, args.model_path)
 
-
-if __name__ == "__main__":
-    parser = parse_argument()
-    args = parser.parse_args()
-
-    writer = SummaryWriter(args.tensorboard_path)
+def seed(args):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     random.seed(args.seed)
+
+def update_results_episode(reward_list, stoppage_list, reward_episode, stoppage_episode):
+    reward_list.append(reward_episode)
+    stoppage_list.append(stoppage_episode / 60)
+
+def compute_stats(positions, last_100_stoppage_pp, last_100_reward):
+    mean_stoppage_per_position = dict(zip(positions, np.mean(np.array(last_100_stoppage_pp), axis=0)))
+    mean_rewards = np.mean(last_100_reward)
+    return mean_stoppage_per_position, mean_rewards
+
+def print_stats(episode, mean_rewards, mean_stoppage_per_position):
+    print(f"Episode {episode} \t {mean_rewards}")
+    print(f"Episode {episode} \t {mean_stoppage_per_position}\n")
+
+def broadcast_stats(writer, episode, mean_rewards, mean_stoppage_per_position):
+    writer.add_scalars("Mean down time per position in minutes", mean_stoppage_per_position, e)
+    writer.add_scalar("Mean reward", mean_rewards, episode)
+
+
+if __name__ == "__main__":
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    args = parse_argument()
+    seed(args)
+
+    writer = SummaryWriter(args.tensorboard_path) if args.tensorboard else None
 
     wc = pd.read_csv(args.wc_path, sep=";").iloc[:20, :]
     wc = wc.sample(frac=1, random_state=args.seed)
@@ -183,73 +211,61 @@ if __name__ == "__main__":
 
     env = EnvSeqV2(wc, takt_time, buffer_percent)
     nA = env.action_space
-    state_shape = env.reset().shape
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    checkpoint = None
-    last_episode = 0
-    last_best_reward = -np.inf
 
-    if args.run_type in ["resume", "evaluate"]:
-        checkpoint = torch.load(args.model_path, map_location=device)
-        last_episode = checkpoint["episode"]
-        last_best_reward = checkpoint['mean_100_reward']
-        print(f"last mean reward: {last_best_reward}\n")
+
 
     if args.run_type == "train":
-        assert args.target_reward is not None
+        checkpoint = None
+        last_episode = 0
+        last_best_reward = -np.inf
+    else:
+        checkpoint, last_episode, last_best_reward = load_model(args, device)
 
+    state_shape = env.reset().shape
     agent = Agent(state_shape, nA, device, run_type=args.run_type, checkpoint=checkpoint)
 
-    # Resume
     last_100_reward = deque(maxlen=100)
     last_100_stoppage_pp = deque(maxlen=100)
     mean_rewards = -np.inf
 
-    if args.run_type in ["train", "resume"]:
+    # curriculum learning
+    shuffle_every = last_episode + args.n_episodes
+    # TODO: then decrement this number until 5
+
+
+    if args.run_type == "evaluate":
+        reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle=False)
+    else:
         for e in range(last_episode, last_episode + args.n_episodes):
-            shuffle = False
+
+            shuffle = e % shuffle_every == 0
             state, is_terminal = env.reset(shuffle), False
             agent.reset_metrics()
 
             for t_step in count():
-                next_state, is_terminal = agent.interact_with_environment(state, env, t_step)
-                state = next_state
+                state, is_terminal = agent.interact_with_environment(state, env, t_step)  # state = next_state (output)
                 if is_terminal: break
 
             next_value = 0 if is_terminal else agent.value_model(state).detach().item()
             agent.rewards.append(next_value)
             agent.learn()
 
-            reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle)
-            last_100_reward.append(reward_episode)
-            last_100_stoppage_pp.append(stoppage_pp / 60)
+            reward_episode, stoppage_pp, _ = agent.evaluate_one_episode(env, shuffle)
+            update_results_episode(last_100_reward, last_100_stoppage_pp, reward_episode, stoppage_pp)
 
             if e % args.print_every == 0:
-                mean_stoppage_per_position = dict(zip(positions, np.mean(np.array(last_100_stoppage_pp), axis=0)))
-                mean_rewards = np.mean(last_100_reward)
+                res, mean_rewards = compute_stats(positions, last_100_stoppage_pp, last_100_reward)
+                broadcast_stats(writer, e, mean_rewards, res) if args.tensorboard else print_stats(e, mean_rewards, res)
 
-                if args.tensorboard:
-                    writer.add_scalars("Mean down time per position in minutes", mean_stoppage_per_position, e)
-                    writer.add_scalar("Mean reward", mean_rewards, e)
-                else:
-                    print(f"Episode {e} \t {mean_rewards}")
-                    print(f"Episode {e} \t {mean_stoppage_per_position}")
-                    print("")
+            if args.debug is False:
+                if (args.run_type == "resume") and (mean_rewards >= last_best_reward):
+                    save_model(args, agent, mean_rewards, e)
+                    last_best_reward = mean_rewards
 
-            if (args.run_type == "resume") and (mean_rewards >= last_best_reward):
-                save_state_dict(args, agent, mean_rewards, e)
-                last_best_reward = mean_rewards
+                elif (args.run_type == "train") and (mean_rewards >= args.target_reward):
+                    save_model(args, agent, mean_rewards, e)
+                    break
 
-            elif (args.run_type == "train") and (mean_rewards >= args.target_reward):
-                save_state_dict(args, agent, mean_rewards, e)
-                print("Finished.")
-                break
-    else:
-        reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle=False)
-        print(wc)
-        print("")
-        print(stoppage_pp)
-        print(sequence)
-
+    print("Finished.")
     writer.close()
