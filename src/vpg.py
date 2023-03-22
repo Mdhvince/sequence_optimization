@@ -61,7 +61,6 @@ class Agent:
                     if isinstance(v, torch.Tensor):
                         s[k] = v.to(device)
 
-
     def interact_with_environment(self, state, env, t_step):
         action, logpa, entropy = self.policy.full_pass(state)
         next_state, reward, is_terminal, _ = env.step(action, t_step)
@@ -212,9 +211,6 @@ if __name__ == "__main__":
     env = EnvSeqV2(wc, takt_time, buffer_percent)
     nA = env.action_space
 
-
-
-
     if args.run_type == "train":
         checkpoint = None
         last_episode = 0
@@ -229,17 +225,14 @@ if __name__ == "__main__":
     last_100_stoppage_pp = deque(maxlen=100)
     mean_rewards = -np.inf
 
-    # curriculum learning
-    shuffle_every = last_episode + args.n_episodes
-    # TODO: then decrement this number until 5
-
+    # curriculum learning is applied via resume training
 
     if args.run_type == "evaluate":
         reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle=False)
     else:
         for e in range(last_episode, last_episode + args.n_episodes):
+            shuffle = False
 
-            shuffle = e % shuffle_every == 0
             state, is_terminal = env.reset(shuffle), False
             agent.reset_metrics()
 

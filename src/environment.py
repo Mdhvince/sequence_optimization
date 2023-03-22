@@ -65,7 +65,8 @@ class EnvSeqV2:
         return state
 
     def step(self, action, t_step):
-        is_terminal = t_step == self.N_SEATS - 1
+        # is_terminal = t_step == self.N_SEATS - 1
+        is_terminal = t_step == self.N_SEATS * self.N_SEATS
 
         row_id, direction = self.get_movement_from_action(action)
         self.update_sequence(row_id, direction)

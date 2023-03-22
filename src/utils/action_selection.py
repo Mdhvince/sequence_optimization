@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 
-INF = 9999999999999999
 
 class EGreedyExpStrategy:
     def __init__(self, init_epsilon=1.0, min_epsilon=0.1, decay_steps=20000):
