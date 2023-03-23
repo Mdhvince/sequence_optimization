@@ -1,6 +1,6 @@
-import argparse
 import random
 import warnings
+import configparser
 from itertools import count
 from collections import deque
 
@@ -140,28 +140,14 @@ class Agent:
 # END Agent
 
 
-def parse_argument():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run_type", type=str, choices=["train", "resume", "evaluate"])
-    parser.add_argument("--target_reward", type=int, help="only in train mode")
-    parser.add_argument("--model_path", type=str)
-    parser.add_argument("--seed", type=int)
-    parser.add_argument("--wc_path", type=str, help="path of the csv file of workcontent")
-    parser.add_argument("--n_episodes", type=int, help="number of additional episodes")
-    parser.add_argument("--print_every", type=int)
-    parser.add_argument("--tensorboard", type=int, choices=[0, 1])
-    parser.add_argument("--tensorboard_path", type=str)
-    parser.add_argument("--debug", type=int, choices=[0, 1], help="in debug mode, no weights will be saved")
-    return parser.parse_args()
-
-def load_model(args, device):
-    checkpoint = torch.load(args.model_path, map_location=device)
+def load_model(model_path, device):
+    checkpoint = torch.load(model_path, map_location=device)
     last_episode = checkpoint["episode"]
     last_best_reward = checkpoint['mean_100_reward']
     print(f"last mean reward: {last_best_reward}\n")
     return checkpoint, last_episode, last_best_reward
 
-def save_model(args, agent, mean_rewards, episode):
+def save_model(model_path, agent, mean_rewards, episode):
     torch.save({
         'episode': episode,
         'mean_100_reward': mean_rewards,
@@ -169,12 +155,12 @@ def save_model(args, agent, mean_rewards, episode):
         'value_state_dict': agent.value_model.state_dict(),
         'p_optimizer_state_dict': agent.p_optimizer.state_dict(),
         'v_optimizer_state_dict': agent.v_optimizer.state_dict(),
-    }, args.model_path)
+    }, model_path)
 
-def seed(args):
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    random.seed(args.seed)
+def seed_everything(seed):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
 
 def update_results_episode(reward_list, stoppage_list, reward_episode, stoppage_episode):
     reward_list.append(reward_episode)
@@ -196,13 +182,28 @@ def broadcast_stats(writer, episode, mean_rewards, mean_stoppage_per_position):
 
 if __name__ == "__main__":
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    args = parse_argument()
-    seed(args)
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+    cfg = config["DEFAULT"]
+    cfg_tsb = config["TENSORBOARD"]
+    cfg_train = config["TRAIN"]
+    
+    seed = cfg.getint("seed")
+    mode = cfg.get("mode")
+    model_path = cfg.get("model_path")
+    n_episodes = cfg.getint("n_episodes")
+    print_every = cfg.getint("print_every")
+    debug = cfg.getboolean("debug")
+    target_reward = cfg_train.getint("target_reward")
+    launch_tsb = cfg_tsb.getboolean("launch")
 
-    writer = SummaryWriter(args.tensorboard_path) if args.tensorboard else None
+    assert mode in ["train", "evaluation", "resume"]
+    
+    seed_everything(seed)
+    writer = SummaryWriter(cfg_tsb.get("folder")) if launch_tsb else None
 
-    wc = pd.read_csv(args.wc_path, sep=";").iloc[:20, :]
-    wc = wc.sample(frac=1, random_state=args.seed)
+    wc = pd.read_csv(cfg.get("workcontent_filepath"), sep=";").iloc[:20, :]
+    wc = wc.sample(frac=1, random_state=seed)
 
     positions = wc.columns
     takt_time = np.ones(len(positions)) * 59
@@ -211,15 +212,15 @@ if __name__ == "__main__":
     env = EnvSeqV2(wc, takt_time, buffer_percent)
     nA = env.action_space
 
-    if args.run_type == "train":
+    if mode == "train":
         checkpoint = None
         last_episode = 0
         last_best_reward = -np.inf
     else:
-        checkpoint, last_episode, last_best_reward = load_model(args, device)
+        checkpoint, last_episode, last_best_reward = load_model(model_path, device)
 
     state_shape = env.reset().shape
-    agent = Agent(state_shape, nA, device, run_type=args.run_type, checkpoint=checkpoint)
+    agent = Agent(state_shape, nA, device, run_type=mode, checkpoint=checkpoint)
 
     last_100_reward = deque(maxlen=100)
     last_100_stoppage_pp = deque(maxlen=100)
@@ -227,10 +228,10 @@ if __name__ == "__main__":
 
     # curriculum learning is applied via resume training
 
-    if args.run_type == "evaluate":
+    if mode == "evaluate":
         reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle=False)
     else:
-        for e in range(last_episode, last_episode + args.n_episodes):
+        for e in range(last_episode, last_episode + n_episodes):
             shuffle = False
 
             state, is_terminal = env.reset(shuffle), False
@@ -247,17 +248,17 @@ if __name__ == "__main__":
             reward_episode, stoppage_pp, _ = agent.evaluate_one_episode(env, shuffle)
             update_results_episode(last_100_reward, last_100_stoppage_pp, reward_episode, stoppage_pp)
 
-            if e % args.print_every == 0:
+            if e % print_every == 0:
                 res, mean_rewards = compute_stats(positions, last_100_stoppage_pp, last_100_reward)
-                broadcast_stats(writer, e, mean_rewards, res) if args.tensorboard else print_stats(e, mean_rewards, res)
+                broadcast_stats(writer, e, mean_rewards, res) if launch_tsb else print_stats(e, mean_rewards, res)
 
-            if args.debug is False:
-                if (args.run_type == "resume") and (mean_rewards >= last_best_reward):
-                    save_model(args, agent, mean_rewards, e)
+            if debug is False:
+                if (mode == "resume") and (mean_rewards >= last_best_reward):
+                    save_model(model_path, agent, mean_rewards, e)
                     last_best_reward = mean_rewards
 
-                elif (args.run_type == "train") and (mean_rewards >= args.target_reward):
-                    save_model(args, agent, mean_rewards, e)
+                elif (mode == "train") and (mean_rewards >= target_reward):
+                    save_model(model_path, agent, mean_rewards, e)
                     break
 
     print("Finished.")
