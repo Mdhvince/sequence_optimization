@@ -16,7 +16,6 @@ from networks import PolicyVPG, ValueVPG
 warnings.filterwarnings('ignore')
 
 
-
 class Agent:
     def __init__(self, state_shape, nA, device, run_type="train", checkpoint=None):
         self.device = device
@@ -137,6 +136,7 @@ class Agent:
         self.entropies = []
         self.values = []
 
+
 # END Agent
 
 
@@ -179,48 +179,55 @@ def broadcast_stats(writer, episode, mean_rewards, mean_stoppage_per_position):
     writer.add_scalars("Mean down time per position in minutes", mean_stoppage_per_position, e)
     writer.add_scalar("Mean reward", mean_rewards, episode)
 
-
-if __name__ == "__main__":
+def setup(config_filepath):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     config = configparser.ConfigParser()
-    config.read("config.ini")
-    cfg = config["DEFAULT"]
-    cfg_tsb = config["TENSORBOARD"]
-    cfg_train = config["TRAIN"]
-    
-    seed = cfg.getint("seed")
-    mode = cfg.get("mode")
-    model_path = cfg.get("model_path")
-    n_episodes = cfg.getint("n_episodes")
-    print_every = cfg.getint("print_every")
-    debug = cfg.getboolean("debug")
-    target_reward = cfg_train.getint("target_reward")
-    launch_tsb = cfg_tsb.getboolean("launch")
+    config.read(config_filepath)
+    return device, config["DEFAULT"], config["TRAIN"], config["TENSORBOARD"]
 
-    assert mode in ["train", "evaluation", "resume"]
-    
-    seed_everything(seed)
-    writer = SummaryWriter(cfg_tsb.get("folder")) if launch_tsb else None
-
+def make_env(cfg):
     wc = pd.read_csv(cfg.get("workcontent_filepath"), sep=";").iloc[:20, :]
-    wc = wc.sample(frac=1, random_state=seed)
-
+    wc = wc.sample(frac=1, random_state=SEED)
     positions = wc.columns
     takt_time = np.ones(len(positions)) * 59
     buffer_percent = np.array([1.45, 1.60, 1.25, 1.50, 1.25, 1.25, 1.25, 1.50, 1.25, 1.25, 1.25, 1.25, 1.25])
-
     env = EnvSeqV2(wc, takt_time, buffer_percent)
-    nA = env.action_space
+    return env
 
+def get_writer(cfg_tsb):
+    return SummaryWriter(cfg_tsb.get("folder")) if LAUNCH_TSB else None
+
+def load_checkpoint_info(mode, model_path, device):
     if mode == "train":
         checkpoint = None
         last_episode = 0
         last_best_reward = -np.inf
     else:
         checkpoint, last_episode, last_best_reward = load_model(model_path, device)
+    return checkpoint, last_episode, last_best_reward
 
-    state_shape = env.reset().shape
-    agent = Agent(state_shape, nA, device, run_type=mode, checkpoint=checkpoint)
+
+
+if __name__ == "__main__":
+    device, cfg, cfg_train, cfg_tsb = setup(config_filepath="config.ini")
+
+    SEED = cfg.getint("seed")
+    MODE = cfg.get("mode")
+    MODEL_PATH = cfg.get("model_path")
+    N_EPISODES = cfg.getint("n_episodes")
+    PRINT_EVERY = cfg.getint("print_every")
+    DEBUG = cfg.getboolean("debug")
+    TARGET_REWARD = cfg_train.getint("target_reward")
+    LAUNCH_TSB = cfg_tsb.getboolean("launch")
+
+    assert MODE in ["train", "evaluation", "resume"]
+
+    seed_everything(SEED)
+    checkpoint, last_episode, last_best_reward = load_checkpoint_info(MODE, MODEL_PATH, device)
+
+    env = make_env(cfg)
+    state_shape, nA = env.reset().shape, env.action_space
+    agent = Agent(state_shape, nA, device, run_type=MODE, checkpoint=checkpoint)
 
     last_100_reward = deque(maxlen=100)
     last_100_stoppage_pp = deque(maxlen=100)
@@ -228,10 +235,11 @@ if __name__ == "__main__":
 
     # curriculum learning is applied via resume training
 
-    if mode == "evaluate":
+    if MODE == "evaluate":
         reward_episode, stoppage_pp, sequence = agent.evaluate_one_episode(env, shuffle=False)
     else:
-        for e in range(last_episode, last_episode + n_episodes):
+        writer = get_writer(cfg_tsb)
+        for e in range(last_episode, last_episode + N_EPISODES):
             shuffle = False
 
             state, is_terminal = env.reset(shuffle), False
@@ -248,18 +256,18 @@ if __name__ == "__main__":
             reward_episode, stoppage_pp, _ = agent.evaluate_one_episode(env, shuffle)
             update_results_episode(last_100_reward, last_100_stoppage_pp, reward_episode, stoppage_pp)
 
-            if e % print_every == 0:
-                res, mean_rewards = compute_stats(positions, last_100_stoppage_pp, last_100_reward)
-                broadcast_stats(writer, e, mean_rewards, res) if launch_tsb else print_stats(e, mean_rewards, res)
+            if e % PRINT_EVERY == 0:
+                res, mean_rewards = compute_stats(env.wc.columns, last_100_stoppage_pp, last_100_reward)
+                broadcast_stats(writer, e, mean_rewards, res) if LAUNCH_TSB else print_stats(e, mean_rewards, res)
 
-            if debug is False:
-                if (mode == "resume") and (mean_rewards >= last_best_reward):
-                    save_model(model_path, agent, mean_rewards, e)
+            if DEBUG is False:
+                if (MODE == "resume") and (mean_rewards >= last_best_reward):
+                    save_model(MODEL_PATH, agent, mean_rewards, e)
                     last_best_reward = mean_rewards
 
-                elif (mode == "train") and (mean_rewards >= target_reward):
-                    save_model(model_path, agent, mean_rewards, e)
+                elif (MODE == "train") and (mean_rewards >= TARGET_REWARD):
+                    save_model(MODEL_PATH, agent, mean_rewards, e)
                     break
 
     print("Finished.")
-    writer.close()
+    if LAUNCH_TSB: writer.close()
